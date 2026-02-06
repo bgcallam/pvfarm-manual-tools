@@ -40,10 +40,24 @@ export interface RoadGeometry {
   width: number;
 }
 
+export interface StampSegment {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  orientation: 'horizontal' | 'vertical';
+}
+
 export type ViewMode = 'normal' | 'tracker' | 'block';
 export type ToolType = 'select' | 'fill' | 'edit' | 'align' | 'trim' | 'stamp';
 export type FillPattern = 'mega' | 'max' | 'aligned';
 export type AlignMode = 'rigid' | 'noodle';
+export type EditSubMode = 'point' | 'segment' | 'add_remove';
+export type TrimExtendMode = 'trim' | 'extend';
+export type SelectionScope = 'individual' | 'row' | 'field' | 'all';
+export type SubAreaScope = 'all' | 'north' | 'south';
+export type MoveCopyMode = 'move' | 'copy' | 'array';
 
 export interface DesignState {
   viewMode: ViewMode;
@@ -58,6 +72,22 @@ export interface DesignState {
   alignSelectionPicked: boolean;
   alignCommittedMode: AlignMode | null;
   blockFillCommitted: boolean;
+  editSubMode: EditSubMode;
+  trimExtendMode: TrimExtendMode;
+  stampOrientation: 'horizontal' | 'vertical';
+  selectionScope: SelectionScope;
+  subAreaScope: SubAreaScope;
+  moveCopyMode: MoveCopyMode;
+  osnapEnabled: boolean;
+  smartGuidesEnabled: boolean;
+  adaptiveRoadEditing: boolean;
+  equipmentRemovesTrackers: boolean;
+  blockHeight: number;
+  roadStepDistance: number;
+  editOps: number;
+  trimOps: number;
+  extendOps: number;
+  stampSegments: StampSegment[];
 }
 
 export interface AppConfig {

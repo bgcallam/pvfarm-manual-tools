@@ -17,6 +17,22 @@ const initialState: DesignState = {
   alignSelectionPicked: false,
   alignCommittedMode: null,
   blockFillCommitted: false,
+  editSubMode: 'point',
+  trimExtendMode: 'trim',
+  stampOrientation: 'horizontal',
+  selectionScope: 'individual',
+  subAreaScope: 'all',
+  moveCopyMode: 'move',
+  osnapEnabled: true,
+  smartGuidesEnabled: true,
+  adaptiveRoadEditing: true,
+  equipmentRemovesTrackers: true,
+  blockHeight: 4,
+  roadStepDistance: 24,
+  editOps: 0,
+  trimOps: 0,
+  extendOps: 0,
+  stampSegments: [],
 };
 
 const App: React.FC = () => {
@@ -37,6 +53,10 @@ const App: React.FC = () => {
         next.alignSelectionPicked = false;
         next.alignCommittedMode = null;
         next.blockFillCommitted = false;
+        next.editOps = 0;
+        next.trimOps = 0;
+        next.extendOps = 0;
+        next.stampSegments = [];
       }
 
       if (updates.viewMode === 'tracker' && prev.viewMode !== 'tracker' && next.activeTool === 'select') {
@@ -66,6 +86,15 @@ const App: React.FC = () => {
       alignSelectionPicked: false,
       alignCommittedMode: null,
       blockFillCommitted: false,
+      editSubMode: 'point',
+      trimExtendMode: 'trim',
+      stampOrientation: 'horizontal',
+      selectionScope: 'individual',
+      moveCopyMode: 'move',
+      editOps: 0,
+      trimOps: 0,
+      extendOps: 0,
+      stampSegments: [],
     }));
   };
 
@@ -98,12 +127,38 @@ const App: React.FC = () => {
           if (
             state.activeTool === 'align' &&
             state.viewMode === 'tracker' &&
-            state.alignSelectionPicked &&
-            !state.alignCommittedMode
+            state.alignSelectionPicked
           ) {
             handleStateChange({ alignMode: state.alignMode === 'rigid' ? 'noodle' : 'rigid' });
+            return;
           }
 
+          if (state.activeTool === 'edit') {
+            const modes: DesignState['editSubMode'][] = ['point', 'segment', 'add_remove'];
+            const nextIndex = (modes.indexOf(state.editSubMode) + 1) % modes.length;
+            handleStateChange({ editSubMode: modes[nextIndex] });
+            return;
+          }
+
+          if (state.activeTool === 'trim') {
+            handleStateChange({ trimExtendMode: state.trimExtendMode === 'trim' ? 'extend' : 'trim' });
+            return;
+          }
+
+          if (state.activeTool === 'stamp') {
+            handleStateChange({ stampOrientation: state.stampOrientation === 'horizontal' ? 'vertical' : 'horizontal' });
+          }
+
+          break;
+        }
+        case 'tab': {
+          event.preventDefault();
+          const scopes: DesignState['selectionScope'][] = ['individual', 'row', 'field', 'all'];
+          const currentIndex = scopes.indexOf(state.selectionScope);
+          const nextIndex = event.shiftKey
+            ? (currentIndex - 1 + scopes.length) % scopes.length
+            : (currentIndex + 1) % scopes.length;
+          handleStateChange({ selectionScope: scopes[nextIndex] });
           break;
         }
         default:
@@ -118,7 +173,11 @@ const App: React.FC = () => {
     state.alignCommittedMode,
     state.alignMode,
     state.alignSelectionPicked,
+    state.editSubMode,
     state.fillPattern,
+    state.selectionScope,
+    state.stampOrientation,
+    state.trimExtendMode,
     state.viewMode,
   ]);
 
@@ -149,6 +208,9 @@ const App: React.FC = () => {
           </span>
           <span className="font-mono text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded">
             Align: {state.alignMode.toUpperCase()}
+          </span>
+          <span className="font-mono text-emerald-300 bg-emerald-900/30 px-2 py-0.5 rounded">
+            Select: {state.selectionScope.toUpperCase()}
           </span>
         </div>
 

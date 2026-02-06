@@ -81,3 +81,34 @@ Known prototype limitations (intentional):
 - No production solver integration or persisted project state.
 - No full snap catalog or hard constraint guides.
 - Block masks are deterministic demo slices, not electrical optimization outputs.
+
+## Verification Hardening Pass (2026-02-06, follow-up)
+
+### What was added to increase coverage
+
+- Implemented interactive behaviors for remaining toolbar tools:
+  - Edit (point/segment/add-remove sub-modes)
+  - Trim/Extend (toggle mode + apply action)
+  - Stamp (horizontal/vertical road-segment stamping)
+  - Select (selection scopes + move/copy/array actions)
+- Extended infrastructure controls and behavior:
+  - Running OSnap (with visible snap target labels)
+  - Smart Guides (crosshair guides on cursor/snap)
+  - Sub-area scope (`all`, `north`, `south`) affecting operations
+  - Context-specific panel controls per active tool and mode
+- Added explicit favicon in `index.html` to eliminate runtime 404 noise during local smoke.
+
+### Comprehensive smoke summary
+
+Executed full end-to-end smoke in browser after reset:
+
+1. Fill (Tracker mode): preview + commit succeeded.
+2. Align: pick reference + pick field + commit succeeded.
+3. Edit: action applied and workflow counter incremented.
+4. Trim/Extend: both trim and extend actions applied.
+5. Stamp: horizontal and vertical stamps placed.
+6. Select: selection scope cycling plus move/copy/array actions executed.
+7. Modes: Normal, Tracker, Block switching validated.
+8. Block fill: preview + commit succeeded with 5 ILR labels.
+9. Infra toggles: OSnap and Smart Guides toggles validated in UI and behavior.
+10. Build: `npm run build` passed.
