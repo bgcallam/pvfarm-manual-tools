@@ -132,6 +132,47 @@ const getNearestTracker = (trackers: Tracker[], point: Point): Tracker | null =>
   return minDistance < 80 ? nearest : null;
 };
 
+const getContiguousTrackerField = (
+  trackers: Tracker[],
+  seed: Tracker,
+): Tracker[] => {
+  const isAdjacent = (a: Tracker, b: Tracker): boolean => {
+    const dx = Math.abs(a.x - b.x);
+    const dy = Math.abs(a.y - b.y);
+
+    const lateralNeighbor = dx <= 44 && dy <= 16;
+    const verticalNeighbor = dx <= 16 && dy <= 66;
+    const diagonalNeighbor = dx <= 36 && dy <= 56;
+
+    return lateralNeighbor || verticalNeighbor || diagonalNeighbor;
+  };
+
+  const visited = new Set<string>([seed.id]);
+  const queue: Tracker[] = [seed];
+  const field: Tracker[] = [seed];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    trackers.forEach((candidate) => {
+      if (visited.has(candidate.id)) {
+        return;
+      }
+
+      if (isAdjacent(current, candidate)) {
+        visited.add(candidate.id);
+        queue.push(candidate);
+        field.push(candidate);
+      }
+    });
+  }
+
+  return field;
+};
+
 const applyMoveOffset = (
   trackers: Tracker[],
   roadY: number,
@@ -480,14 +521,6 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return [];
     }
 
-    if (state.selectionScope === 'all') {
-      return inScope;
-    }
-
-    if (state.selectionScope === 'field') {
-      return inScope;
-    }
-
     const nearest = getNearestTracker(inScope, effectiveCursorPoint);
     if (!nearest) {
       return [];
@@ -497,7 +530,15 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return [nearest];
     }
 
-    return inScope.filter((tracker) => Math.abs(tracker.y - nearest.y) <= 4);
+    if (state.selectionScope === 'row') {
+      return inScope.filter((tracker) => Math.abs(tracker.x - nearest.x) <= 8);
+    }
+
+    if (state.selectionScope === 'field') {
+      return inScope;
+    }
+
+    return getContiguousTrackerField(inScope, nearest);
   }, [
     effectiveCursorPoint,
     renderedTrackers,
