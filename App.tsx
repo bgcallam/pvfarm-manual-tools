@@ -161,6 +161,15 @@ const App: React.FC = () => {
           handleStateChange({ selectionScope: scopes[nextIndex] });
           break;
         }
+        case 'escape': {
+          handleStateChange({
+            activeTool: 'select',
+            alignReferencePicked: false,
+            alignSelectionPicked: false,
+            moveCopyMode: 'move',
+          });
+          break;
+        }
         default:
           break;
       }

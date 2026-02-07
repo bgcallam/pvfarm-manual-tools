@@ -251,6 +251,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`N` Normal mode</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Tab` selection scope</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Space` context toggle</div>
+              <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Esc` exit active command</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700 flex items-center gap-1"><Copy size={11} /> Move/Copy/Array via Select</div>
             </div>
           </section>
