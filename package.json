@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "conductor:start": "bash ./conductor-startup.sh",
     "build": "vite build",
     "preview": "vite preview"
   },
