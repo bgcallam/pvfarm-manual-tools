@@ -19,10 +19,9 @@ const initialState: DesignState = {
   blockFillCommitted: false,
   editSubMode: 'point',
   trimExtendMode: 'trim',
-  stampOrientation: 'horizontal',
   selectionScope: 'individual',
-  subAreaScope: 'all',
   moveCopyMode: 'move',
+  activeFieldSeedId: null,
   osnapEnabled: true,
   smartGuidesEnabled: true,
   adaptiveRoadEditing: true,
@@ -32,7 +31,6 @@ const initialState: DesignState = {
   editOps: 0,
   trimOps: 0,
   extendOps: 0,
-  stampSegments: [],
 };
 
 const App: React.FC = () => {
@@ -56,7 +54,7 @@ const App: React.FC = () => {
         next.editOps = 0;
         next.trimOps = 0;
         next.extendOps = 0;
-        next.stampSegments = [];
+        next.activeFieldSeedId = null;
       }
 
       if (updates.viewMode === 'tracker' && prev.viewMode !== 'tracker' && next.activeTool === 'select') {
@@ -88,13 +86,12 @@ const App: React.FC = () => {
       blockFillCommitted: false,
       editSubMode: 'point',
       trimExtendMode: 'trim',
-      stampOrientation: 'horizontal',
       selectionScope: 'individual',
       moveCopyMode: 'move',
+      activeFieldSeedId: null,
       editOps: 0,
       trimOps: 0,
       extendOps: 0,
-      stampSegments: [],
     }));
   };
 
@@ -144,11 +141,6 @@ const App: React.FC = () => {
             handleStateChange({ trimExtendMode: state.trimExtendMode === 'trim' ? 'extend' : 'trim' });
             return;
           }
-
-          if (state.activeTool === 'stamp') {
-            handleStateChange({ stampOrientation: state.stampOrientation === 'horizontal' ? 'vertical' : 'horizontal' });
-          }
-
           break;
         }
         case 'tab': {
@@ -167,6 +159,7 @@ const App: React.FC = () => {
             alignReferencePicked: false,
             alignSelectionPicked: false,
             moveCopyMode: 'move',
+            activeFieldSeedId: null,
           });
           break;
         }
@@ -185,7 +178,6 @@ const App: React.FC = () => {
     state.editSubMode,
     state.fillPattern,
     state.selectionScope,
-    state.stampOrientation,
     state.trimExtendMode,
     state.viewMode,
   ]);

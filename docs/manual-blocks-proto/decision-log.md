@@ -112,3 +112,41 @@ Executed full end-to-end smoke in browser after reset:
 8. Block fill: preview + commit succeeded with 5 ILR labels.
 9. Infra toggles: OSnap and Smart Guides toggles validated in UI and behavior.
 10. Build: `npm run build` passed.
+
+## Replan + Corrections (2026-02-07)
+
+After deeper review against the original spec and PVFARM monorepo references, the prototype was corrected to match the intended one-site functional model.
+
+### Corrections applied
+
+1. Removed `stamp` from the prototype.
+- Deleted stamp tool UI, state, and canvas rendering.
+- Reason: explicitly out of scope for this mini-functional pass.
+
+2. Removed sub-area behavior from the prototype.
+- Deleted sub-area overlays/scopes and related operation filtering.
+- Reason: this prototype targets a single site and contiguous-field workflows, not sub-area management.
+
+3. Enforced contiguous-field-first operations.
+- Edit, trim/extend, and select actions now set/use an active contiguous field seed.
+- Reason: aligns with real PVFARM interaction intent while staying lightweight.
+
+4. Corrected selection semantics.
+- `row` now behaves as vertical selection.
+- `all` now maps to contiguous array field only (not whole-site selection).
+
+5. Added explicit command exit behavior.
+- `Esc` returns to `select`, clears active command context, and clears active field seed.
+
+6. Added conductor run path.
+- Added `conductor-run.sh` and npm alias `conductor:run` for predictable startup.
+
+### Validation outcomes
+
+- `npm run build` passes.
+- DevTools smoke confirms:
+  - fill commit
+  - edit/trim field seeding
+  - row vertical selection behavior
+  - all = contiguous field behavior
+  - escape-to-select command exit behavior

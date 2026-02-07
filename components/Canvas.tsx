@@ -12,7 +12,7 @@ import {
   getParcelBounds,
   pointInPolygon,
 } from '../layoutEngine';
-import { DesignState, Point, StampSegment, Tracker } from '../types';
+import { DesignState, Point, Tracker } from '../types';
 
 interface CanvasProps {
   state: DesignState;
@@ -66,37 +66,8 @@ const distanceToPolyline = (point: Point, polyline: Point[]): number => {
   return minDistance;
 };
 
-const nextStampSegment = (orientation: 'horizontal' | 'vertical', point: Point, roadStepDistance: number): StampSegment => {
-  const length = Math.max(80, roadStepDistance * 2);
-  if (orientation === 'horizontal') {
-    return {
-      id: `stamp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      x1: point.x - length / 2,
-      y1: point.y,
-      x2: point.x + length / 2,
-      y2: point.y,
-      orientation,
-    };
-  }
-
-  return {
-    id: `stamp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    x1: point.x,
-    y1: point.y - length / 2,
-    x2: point.x,
-    y2: point.y + length / 2,
-    orientation,
-  };
-};
-
-const scopeMatches = (tracker: Tracker, roadY: number, scope: DesignState['subAreaScope']): boolean => {
-  if (scope === 'all') {
-    return true;
-  }
-
-  const isNorth = tracker.y + tracker.height / 2 < roadY;
-  return scope === 'north' ? isNorth : !isNorth;
-};
+const isNorthOfRoad = (tracker: Tracker, roadY: number): boolean =>
+  tracker.y + tracker.height / 2 < roadY;
 
 const groupRows = (trackers: Tracker[]): Tracker[][] => {
   const buckets = new Map<number, Tracker[]>();
@@ -135,16 +106,27 @@ const getNearestTracker = (trackers: Tracker[], point: Point): Tracker | null =>
 const getContiguousTrackerField = (
   trackers: Tracker[],
   seed: Tracker,
+  roadY: number,
 ): Tracker[] => {
+  const seedIsNorth = isNorthOfRoad(seed, roadY);
+
   const isAdjacent = (a: Tracker, b: Tracker): boolean => {
-    const dx = Math.abs(a.x - b.x);
-    const dy = Math.abs(a.y - b.y);
+    if (isNorthOfRoad(b, roadY) !== seedIsNorth) {
+      return false;
+    }
 
-    const lateralNeighbor = dx <= 44 && dy <= 16;
-    const verticalNeighbor = dx <= 16 && dy <= 66;
-    const diagonalNeighbor = dx <= 36 && dy <= 56;
+    const centerAX = a.x + a.width / 2;
+    const centerAY = a.y + a.height / 2;
+    const centerBX = b.x + b.width / 2;
+    const centerBY = b.y + b.height / 2;
 
-    return lateralNeighbor || verticalNeighbor || diagonalNeighbor;
+    const dx = Math.abs(centerAX - centerBX);
+    const dy = Math.abs(centerAY - centerBY);
+
+    const maxDx = Math.max(a.width, b.width) * 4.8;
+    const maxDy = Math.max(a.height, b.height) * 1.65;
+
+    return dx <= maxDx && dy <= maxDy;
   };
 
   const visited = new Set<string>([seed.id]);
@@ -173,21 +155,35 @@ const getContiguousTrackerField = (
   return field;
 };
 
+const getFieldBySeedId = (trackers: Tracker[], seedId: string, roadY: number): Tracker[] => {
+  const seed = trackers.find((tracker) => tracker.id === seedId);
+  if (!seed) {
+    return [];
+  }
+  return getContiguousTrackerField(trackers, seed, roadY);
+};
+
 const applyMoveOffset = (
   trackers: Tracker[],
   roadY: number,
-  subAreaScope: DesignState['subAreaScope'],
+  activeFieldSeedId: string | null,
   moveOps: number,
 ): Tracker[] => {
-  if (moveOps === 0) {
+  if (moveOps === 0 || !activeFieldSeedId) {
     return trackers;
   }
+
+  const fieldTrackers = getFieldBySeedId(trackers, activeFieldSeedId, roadY);
+  if (!fieldTrackers.length) {
+    return trackers;
+  }
+  const fieldIds = new Set(fieldTrackers.map((tracker) => tracker.id));
 
   const dx = moveOps * 6;
   const dy = moveOps * -4;
 
   return trackers.map((tracker) => {
-    if (!scopeMatches(tracker, roadY, subAreaScope)) {
+    if (!fieldIds.has(tracker.id)) {
       return tracker;
     }
 
@@ -239,15 +235,6 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
   const parcelBounds = getParcelBounds(workingParcel);
 
-  const roadFromEdit = useMemo(() => {
-    const shift = state.editOps * (state.adaptiveRoadEditing ? 2.5 : 1.6);
-    const direction = state.subAreaScope === 'south' ? 1 : -1;
-    return {
-      ...baseLayout.road,
-      y: baseLayout.road.y + shift * direction,
-    };
-  }, [baseLayout.road, state.editOps, state.adaptiveRoadEditing, state.subAreaScope]);
-
   const trackersAfterAlign = useMemo(() => {
     if (!state.fillCommitted) {
       return [];
@@ -265,6 +252,41 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     return baseLayout.trackers;
   }, [baseLayout.trackers, baseLayout.road, state.fillCommitted, state.alignCommittedMode, workingParcel]);
 
+  const activeFieldSide = useMemo<'north' | 'south' | null>(() => {
+    if (!state.activeFieldSeedId) {
+      return null;
+    }
+
+    const seed = trackersAfterAlign.find((tracker) => tracker.id === state.activeFieldSeedId);
+    if (!seed) {
+      return null;
+    }
+
+    return isNorthOfRoad(seed, baseLayout.road.y) ? 'north' : 'south';
+  }, [state.activeFieldSeedId, trackersAfterAlign, baseLayout.road.y]);
+
+  const roadFromEdit = useMemo(() => {
+    const shift = state.editOps * (state.adaptiveRoadEditing ? 2.5 : 1.6);
+    const direction = activeFieldSide === 'south' ? 1 : -1;
+    return {
+      ...baseLayout.road,
+      y: baseLayout.road.y + shift * direction,
+    };
+  }, [baseLayout.road, state.editOps, state.adaptiveRoadEditing, activeFieldSide]);
+
+  const activeFieldIds = useMemo<Set<string> | null>(() => {
+    if (!state.fillCommitted || !state.activeFieldSeedId) {
+      return null;
+    }
+
+    const fieldTrackers = getFieldBySeedId(trackersAfterAlign, state.activeFieldSeedId, baseLayout.road.y);
+    if (!fieldTrackers.length) {
+      return null;
+    }
+
+    return new Set(fieldTrackers.map((tracker) => tracker.id));
+  }, [state.fillCommitted, state.activeFieldSeedId, trackersAfterAlign, baseLayout.road.y]);
+
   const trackersAfterEdit = useMemo(() => {
     if (!state.fillCommitted) {
       return [];
@@ -278,7 +300,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
       trackers = trackers
         .map((tracker) => {
-          if (!scopeMatches(tracker, roadFromEdit.y, state.subAreaScope)) {
+          if (activeFieldIds && !activeFieldIds.has(tracker.id)) {
             return tracker;
           }
 
@@ -294,7 +316,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           };
         })
         .filter((tracker) => {
-          if (!scopeMatches(tracker, roadFromEdit.y, state.subAreaScope)) {
+          if (activeFieldIds && !activeFieldIds.has(tracker.id)) {
             return true;
           }
 
@@ -312,8 +334,8 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     state.fillCommitted,
     state.editOps,
     state.editSubMode,
-    state.subAreaScope,
     state.equipmentRemovesTrackers,
+    activeFieldIds,
     trackersAfterAlign,
     roadFromEdit,
   ]);
@@ -330,7 +352,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       const southCutoff = parcelBounds.maxY - 26 - state.trimOps * 11;
 
       trackers = trackers.filter((tracker) => {
-        if (!scopeMatches(tracker, roadFromEdit.y, state.subAreaScope)) {
+        if (activeFieldIds && !activeFieldIds.has(tracker.id)) {
           return true;
         }
 
@@ -344,7 +366,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     if (state.extendOps > 0) {
       const sourceRows = groupRows(
-        trackers.filter((tracker) => scopeMatches(tracker, roadFromEdit.y, state.subAreaScope)),
+        trackers.filter((tracker) => (activeFieldIds ? activeFieldIds.has(tracker.id) : true)),
       );
 
       const rowsToExtend = sourceRows.length ? [sourceRows[0], sourceRows[sourceRows.length - 1]].filter(Boolean) : [];
@@ -382,7 +404,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     state.fillCommitted,
     state.trimOps,
     state.extendOps,
-    state.subAreaScope,
+    activeFieldIds,
     trackersAfterEdit,
     roadFromEdit.y,
     parcelBounds.minY,
@@ -391,8 +413,8 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   ]);
 
   const trackersAfterMove = useMemo(
-    () => applyMoveOffset(trackersAfterTrimExtend, roadFromEdit.y, state.subAreaScope, moveOps),
-    [trackersAfterTrimExtend, roadFromEdit.y, state.subAreaScope, moveOps],
+    () => applyMoveOffset(trackersAfterTrimExtend, roadFromEdit.y, state.activeFieldSeedId, moveOps),
+    [trackersAfterTrimExtend, roadFromEdit.y, state.activeFieldSeedId, moveOps],
   );
 
   const renderedTrackers = useMemo(() => {
@@ -505,6 +527,26 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
   const effectiveCursorPoint = snapTarget ? snapTarget.point : cursorPoint;
 
+  const hoveredFieldTrackers = useMemo(() => {
+    if (!effectiveCursorPoint || !renderedTrackers.length || !state.fillCommitted) {
+      return [];
+    }
+
+    const nearest = getNearestTracker(renderedTrackers, effectiveCursorPoint);
+    if (!nearest) {
+      return [];
+    }
+
+    return getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
+  }, [effectiveCursorPoint, renderedTrackers, state.fillCommitted, roadFromEdit.y]);
+
+  const activeFieldTrackers = useMemo(() => {
+    if (!state.activeFieldSeedId || !renderedTrackers.length || !state.fillCommitted) {
+      return [];
+    }
+    return getFieldBySeedId(renderedTrackers, state.activeFieldSeedId, roadFromEdit.y);
+  }, [state.activeFieldSeedId, renderedTrackers, state.fillCommitted, roadFromEdit.y]);
+
   const selectedTrackers = useMemo(() => {
     if (
       !effectiveCursorPoint ||
@@ -515,37 +557,43 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return [];
     }
 
-    const inScope = renderedTrackers.filter((tracker) => scopeMatches(tracker, roadFromEdit.y, state.subAreaScope));
-
-    if (!inScope.length) {
-      return [];
-    }
-
-    const nearest = getNearestTracker(inScope, effectiveCursorPoint);
+    const nearest = getNearestTracker(renderedTrackers, effectiveCursorPoint);
     if (!nearest) {
       return [];
     }
+
+    const hoverField =
+      hoveredFieldTrackers.length > 0
+        ? hoveredFieldTrackers
+        : getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
+    const activeField = activeFieldTrackers.length > 0 ? activeFieldTrackers : hoverField;
 
     if (state.selectionScope === 'individual') {
       return [nearest];
     }
 
     if (state.selectionScope === 'row') {
-      return inScope.filter((tracker) => Math.abs(tracker.x - nearest.x) <= 8);
+      const nearestCenterX = nearest.x + nearest.width / 2;
+      return hoverField.filter((tracker) => {
+        const centerX = tracker.x + tracker.width / 2;
+        return Math.abs(centerX - nearestCenterX) <= 8;
+      });
     }
 
     if (state.selectionScope === 'field') {
-      return inScope;
+      return hoverField;
     }
 
-    return getContiguousTrackerField(inScope, nearest);
+    return activeField;
   }, [
     effectiveCursorPoint,
     renderedTrackers,
     state.activeTool,
     state.fillCommitted,
     state.selectionScope,
-    state.subAreaScope,
+    state.activeFieldSeedId,
+    hoveredFieldTrackers,
+    activeFieldTrackers,
     roadFromEdit.y,
   ]);
 
@@ -563,7 +611,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       if (!state.fillCommitted) {
         return 'Hover inside the left parcel to preview Fill';
       }
-      return 'Fill committed. Use Edit/Align/Trim/Stamp tools for manual operations';
+      return 'Fill committed. Use Edit/Align/Trim/Select for manual operations';
     }
 
     if (state.activeTool === 'align' && state.viewMode === 'tracker') {
@@ -586,18 +634,14 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       if (!state.fillCommitted) {
         return 'Commit Fill first';
       }
-      return `Edit (${state.editSubMode}) · click to apply local adaptive change in ${state.subAreaScope} scope`;
+      return `Edit (${state.editSubMode}) · click to apply local adaptive change in active field`;
     }
 
     if (state.activeTool === 'trim') {
       if (!state.fillCommitted) {
         return 'Commit Fill first';
       }
-      return `${state.trimExtendMode.toUpperCase()} · click to ${state.trimExtendMode} in ${state.subAreaScope} scope`;
-    }
-
-    if (state.activeTool === 'stamp') {
-      return `Stamp (${state.stampOrientation}) · click to place road segment`;
+      return `${state.trimExtendMode.toUpperCase()} · click to ${state.trimExtendMode} in active field`;
     }
 
     if (state.activeTool === 'select') {
@@ -642,11 +686,30 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   };
 
   const onSelectAction = (clickedPoint: Point) => {
-    const selection = selectedTrackers;
-    if (!selection.length) {
+    const nearest = getNearestTracker(renderedTrackers, clickedPoint);
+    if (!nearest) {
       setFlashMessage('No trackers in selection target');
       return;
     }
+
+    const field = getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
+    const nearestCenterX = nearest.x + nearest.width / 2;
+    const selection = (() => {
+      if (state.selectionScope === 'individual') {
+        return [nearest];
+      }
+
+      if (state.selectionScope === 'row') {
+        return field.filter((tracker) => {
+          const centerX = tracker.x + tracker.width / 2;
+          return Math.abs(centerX - nearestCenterX) <= 8;
+        });
+      }
+
+      return field;
+    })();
+
+    onFlowChange({ activeFieldSeedId: nearest.id });
 
     if (state.moveCopyMode === 'move') {
       setMoveOps((prev) => prev + 1);
@@ -713,7 +776,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         editOps: 0,
         trimOps: 0,
         extendOps: 0,
-        stampSegments: [],
+        activeFieldSeedId: null,
       });
       setMoveOps(0);
       setCopiedTrackers([]);
@@ -760,26 +823,29 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     }
 
     if (state.activeTool === 'edit' && state.fillCommitted && clickedInsideWorkingParcel) {
-      onFlowChange({ editOps: state.editOps + 1, blockFillCommitted: false });
+      const nearest = getNearestTracker(renderedTrackers, clickedPoint);
+      if (!nearest) {
+        setFlashMessage('No trackers in edit target');
+        return;
+      }
+      onFlowChange({ editOps: state.editOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
       setFlashMessage(`Edit ${state.editSubMode} applied`);
       return;
     }
 
     if (state.activeTool === 'trim' && state.fillCommitted && clickedInsideWorkingParcel) {
+      const nearest = getNearestTracker(renderedTrackers, clickedPoint);
+      if (!nearest) {
+        setFlashMessage('No trackers in trim target');
+        return;
+      }
       if (state.trimExtendMode === 'trim') {
-        onFlowChange({ trimOps: state.trimOps + 1, blockFillCommitted: false });
+        onFlowChange({ trimOps: state.trimOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
         setFlashMessage('Trim applied');
       } else {
-        onFlowChange({ extendOps: state.extendOps + 1, blockFillCommitted: false });
+        onFlowChange({ extendOps: state.extendOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
         setFlashMessage('Extend applied');
       }
-      return;
-    }
-
-    if (state.activeTool === 'stamp' && clickedInsideWorkingParcel) {
-      const segment = nextStampSegment(state.stampOrientation, clickedPoint, state.roadStepDistance);
-      onFlowChange({ stampSegments: [...state.stampSegments, segment] });
-      setFlashMessage(`Stamp placed (${state.stampOrientation})`);
       return;
     }
 
@@ -796,7 +862,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     setCursorPoint(point);
   };
 
-  const roadVisible = fillPreviewActive || state.fillCommitted || state.stampSegments.length > 0;
+  const roadVisible = fillPreviewActive || state.fillCommitted;
 
   return (
     <div className="w-full h-full bg-slate-950 overflow-hidden relative select-none">
@@ -833,31 +899,12 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           />
         ))}
 
-        {state.subAreaScope !== 'all' && (
-          <rect
-            x={parcelBounds.minX - 10}
-            width={parcelBounds.maxX - parcelBounds.minX + 20}
-            y={state.subAreaScope === 'north' ? parcelBounds.minY - 10 : roadFromEdit.y}
-            height={state.subAreaScope === 'north' ? roadFromEdit.y - parcelBounds.minY + 12 : parcelBounds.maxY - roadFromEdit.y + 10}
-            fill="rgba(16, 185, 129, 0.08)"
-            stroke="rgba(16, 185, 129, 0.5)"
-            strokeDasharray="6 5"
-          />
-        )}
-
         {roadVisible && (
           <g opacity={state.viewMode === 'block' ? 0.26 : fillPreviewActive ? 0.55 : 0.9}>
             <line x1={roadFromEdit.x1} y1={roadFromEdit.y} x2={roadFromEdit.x2} y2={roadFromEdit.y} stroke="#cbd5e1" strokeWidth={roadFromEdit.width} />
             <line x1={roadFromEdit.x1} y1={roadFromEdit.y} x2={roadFromEdit.x2} y2={roadFromEdit.y} stroke="#475569" strokeWidth={1.5} strokeDasharray="8 8" />
           </g>
         )}
-
-        {state.stampSegments.map((segment) => (
-          <g key={segment.id} opacity={state.viewMode === 'block' ? 0.2 : 0.92}>
-            <line x1={segment.x1} y1={segment.y1} x2={segment.x2} y2={segment.y2} stroke="#f8fafc" strokeWidth={Math.max(4, state.roadWidth)} />
-            <line x1={segment.x1} y1={segment.y1} x2={segment.x2} y2={segment.y2} stroke="#475569" strokeWidth={1} strokeDasharray="7 6" />
-          </g>
-        ))}
 
         {fillPreviewActive && (
           <g opacity={0.55}>
@@ -981,7 +1028,6 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
       <div className="absolute bottom-4 left-4 flex items-center gap-3 text-xs">
         <div className="bg-slate-900/85 border border-slate-700 rounded px-2 py-1 text-slate-300">Scale 1:200</div>
-        <div className="bg-slate-900/85 border border-slate-700 rounded px-2 py-1 text-slate-300">Sub-area: {state.subAreaScope}</div>
         <div className="bg-slate-900/85 border border-slate-700 rounded px-2 py-1 text-slate-300">Demo solver: local deterministic</div>
       </div>
     </div>

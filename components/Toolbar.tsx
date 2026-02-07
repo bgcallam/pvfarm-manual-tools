@@ -5,7 +5,6 @@ import {
   Edit2,
   AlignLeft,
   Scissors,
-  Stamp,
   Grid,
   Box,
   LayoutTemplate,
@@ -32,7 +31,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, viewMode, onSelectTool, o
     { id: 'edit', icon: <Edit2 size={18} />, label: 'Edit' },
     { id: 'align', icon: <AlignLeft size={18} />, label: 'Align' },
     { id: 'trim', icon: <Scissors size={18} />, label: 'Trim/Extend' },
-    { id: 'stamp', icon: <Stamp size={18} />, label: 'Stamp' },
   ];
 
   return (

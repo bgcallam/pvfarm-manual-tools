@@ -186,14 +186,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onChange={(event) => onChange({ equipmentRemovesTrackers: event.target.checked })}
                 />
               </label>
-              <div className="pt-2 border-t border-slate-700/60">
-                <div className="text-slate-400 mb-1">Sub-area scope</div>
-                <div className="flex gap-2">
-                  <PillButton active={state.subAreaScope === 'all'} label="All" onClick={() => onChange({ subAreaScope: 'all' })} />
-                  <PillButton active={state.subAreaScope === 'north'} label="North" onClick={() => onChange({ subAreaScope: 'north' })} />
-                  <PillButton active={state.subAreaScope === 'south'} label="South" onClick={() => onChange({ subAreaScope: 'south' })} />
-                </div>
-              </div>
             </div>
           </section>
 
@@ -205,10 +197,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <div>Active tool: <span className="text-slate-100 uppercase">{state.activeTool}</span></div>
               {state.activeTool === 'edit' && <div>Edit sub-mode: <span className="text-cyan-300">{state.editSubMode}</span> (`Space` cycles)</div>}
               {state.activeTool === 'trim' && <div>Trim/Extend mode: <span className="text-cyan-300">{state.trimExtendMode}</span> (`Space` toggles)</div>}
-              {state.activeTool === 'stamp' && <div>Stamp orientation: <span className="text-cyan-300">{state.stampOrientation}</span> (`Space` toggles)</div>}
               {state.activeTool === 'select' && (
                 <>
                   <div>Selection scope: <span className="text-cyan-300">{state.selectionScope}</span> (`Tab` cycles)</div>
+                  <div>All = contiguous array field (single-site)</div>
                   <div className="flex gap-2 pt-1">
                     <PillButton active={state.moveCopyMode === 'move'} label="Move" onClick={() => onChange({ moveCopyMode: 'move' })} />
                     <PillButton active={state.moveCopyMode === 'copy'} label="Copy" onClick={() => onChange({ moveCopyMode: 'copy' })} />
@@ -216,6 +208,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   </div>
                 </>
               )}
+              <div>Active field seed: <span className="text-cyan-300">{state.activeFieldSeedId ?? 'none'}</span></div>
               {state.activeTool === 'fill' && (
                 <div>Fill pattern: <span className="text-cyan-300">{state.fillPattern}</span> (`Space` cycles)</div>
               )}
@@ -237,7 +230,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <StepRow done={state.blockFillCommitted} label="5. Block fill committed" />
               <StepRow done={state.editOps > 0} label={`6. Edit actions (${state.editOps})`} />
               <StepRow done={state.trimOps + state.extendOps > 0} label={`7. Trim/Extend actions (${state.trimOps + state.extendOps})`} />
-              <StepRow done={state.stampSegments.length > 0} label={`8. Stamp segments (${state.stampSegments.length})`} />
             </div>
           </section>
 
