@@ -30,6 +30,7 @@ interface PropertiesPanelProps {
   onChange: (updates: Partial<DesignState>) => void;
   trackerCount: number;
   onResetFlow: () => void;
+  floating?: boolean;
 }
 
 const StepRow: React.FC<{ done: boolean; label: string }> = ({ done, label }) => (
@@ -67,6 +68,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onChange,
   trackerCount,
   onResetFlow,
+  floating = false,
 }) => {
   const trackerDcKw =
     (DEFAULT_STRING_COUNT * DEFAULT_STRING_SIZE * MODULE_WATTAGE_W) / 1000;
@@ -78,8 +80,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     rowToRowFt
   );
 
+  const containerClass = floating
+    ? 'w-80 bg-slate-900/95 border border-slate-800 rounded-xl flex flex-col h-[70vh] text-slate-300 shadow-2xl backdrop-blur'
+    : 'w-full lg:w-80 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-[45vh] lg:h-full text-slate-300 z-20 shadow-2xl';
+
   return (
-    <div className="w-full lg:w-80 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-[45vh] lg:h-full text-slate-300 z-20 shadow-2xl">
+    <div className={containerClass}>
       <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900">
         <h2 className="font-semibold text-white flex items-center gap-2 text-xs uppercase tracking-wide">
           <Settings2 size={15} className="text-blue-500" />
@@ -223,6 +229,95 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onChange={(event) => onChange({ ui: { osnapEnabled: event.target.checked } })}
                 />
               </label>
+              {state.ui.osnapEnabled && (
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-300 pl-4">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={state.ui.osnapCategories.rowSpacing}
+                      onChange={(event) =>
+                        onChange({
+                          ui: {
+                            osnapCategories: {
+                              ...state.ui.osnapCategories,
+                              rowSpacing: event.target.checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    R2R spacing
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={state.ui.osnapCategories.roadCenterline}
+                      onChange={(event) =>
+                        onChange({
+                          ui: {
+                            osnapCategories: {
+                              ...state.ui.osnapCategories,
+                              roadCenterline: event.target.checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    Road center
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={state.ui.osnapCategories.roadEdge}
+                      onChange={(event) =>
+                        onChange({
+                          ui: {
+                            osnapCategories: {
+                              ...state.ui.osnapCategories,
+                              roadEdge: event.target.checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    Road edge
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={state.ui.osnapCategories.boundaryVertex}
+                      onChange={(event) =>
+                        onChange({
+                          ui: {
+                            osnapCategories: {
+                              ...state.ui.osnapCategories,
+                              boundaryVertex: event.target.checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    Boundary vertex
+                  </label>
+                  <label className="flex items-center gap-1 col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={state.ui.osnapCategories.boundaryEdge}
+                      onChange={(event) =>
+                        onChange({
+                          ui: {
+                            osnapCategories: {
+                              ...state.ui.osnapCategories,
+                              boundaryEdge: event.target.checked,
+                            },
+                          },
+                        })
+                      }
+                    />
+                    Boundary edge
+                  </label>
+                </div>
+              )}
               <label className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1"><Waypoints size={12} /> Smart Guides</span>
                 <input
@@ -266,8 +361,17 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               )}
               {state.ui.activeTool === 'select' && (
                 <>
-                  <div>Selection scope: <span className="text-cyan-300">{state.ui.selectionScope}</span> (`Tab` cycles)</div>
-                  <div>All = contiguous array field (single-site)</div>
+                  {state.ui.viewMode === 'normal' ? (
+                    <div>
+                      Normal target: <span className="text-cyan-300">{state.ui.normalSelectionTarget}</span> (
+                      `Tab` cycles)
+                    </div>
+                  ) : (
+                    <>
+                      <div>Selection scope: <span className="text-cyan-300">{state.ui.selectionScope}</span> (`Tab` cycles)</div>
+                      <div>All = contiguous array field (single-site)</div>
+                    </>
+                  )}
                   <div className="flex gap-2 pt-1">
                     <PillButton
                       active={state.ui.moveCopyMode === 'move'}
@@ -288,6 +392,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </>
               )}
               <div>Active field seed: <span className="text-cyan-300">{state.ui.activeFieldSeedId ?? 'none'}</span></div>
+              <div>
+                Selected trackers: <span className="text-cyan-300">{state.ui.selectedTrackerIds.length}</span>
+              </div>
               {state.ui.activeTool === 'fill' && (
                 <div>Fill pattern: <span className="text-cyan-300">{state.ui.fillPattern}</span> (`Space` cycles)</div>
               )}
@@ -321,7 +428,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`T` Tracker mode</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`B` Block mode</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`N` Normal mode</div>
-              <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Tab` selection scope</div>
+              <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Tab` scope (T/B) or target (N)</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Space` context toggle</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700">`Esc` exit active command</div>
               <div className="bg-slate-800/50 p-2 rounded border border-slate-700 flex items-center gap-1"><Copy size={11} /> Move/Copy/Array via Select</div>

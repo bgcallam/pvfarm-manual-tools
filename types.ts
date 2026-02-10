@@ -63,6 +63,7 @@ export type EditSubMode = 'point' | 'segment' | 'add_remove';
 export type TrimExtendMode = 'trim' | 'extend';
 export type SelectionScope = 'individual' | 'row' | 'field' | 'all';
 export type MoveCopyMode = 'move' | 'copy' | 'array';
+export type NormalSelectionTarget = 'tracker' | 'road' | 'boundary';
 
 export interface UIState {
   viewMode: ViewMode;
@@ -75,7 +76,18 @@ export interface UIState {
   selectionScope: SelectionScope;
   moveCopyMode: MoveCopyMode;
   activeFieldSeedId: string | null;
+  normalSelectionTarget: NormalSelectionTarget;
+  selectedTrackerIds: string[];
+  selectedRoadId: string | null;
+  selectedBoundaryId: string | null;
   osnapEnabled: boolean;
+  osnapCategories: {
+    rowSpacing: boolean;
+    roadCenterline: boolean;
+    roadEdge: boolean;
+    boundaryVertex: boolean;
+    boundaryEdge: boolean;
+  };
   smartGuidesEnabled: boolean;
   adaptiveRoadEditing: boolean;
 }

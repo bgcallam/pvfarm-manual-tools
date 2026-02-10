@@ -34,8 +34,8 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, viewMode, onSelectTool, o
   ];
 
   return (
-    <div className="w-full lg:w-16 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800 flex lg:flex-col items-center px-2 py-2 lg:py-4 gap-3 lg:gap-6 z-20">
-      <div className="flex flex-row lg:flex-col gap-2">
+    <div className="w-full bg-slate-950 border-b border-slate-800 flex items-center justify-between px-4 py-2 gap-4 z-20">
+      <div className="flex flex-row gap-2">
         {modes.map((mode) => (
           <button
             key={mode.id}
@@ -55,17 +55,14 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, viewMode, onSelectTool, o
           </button>
         ))}
       </div>
-
-      <div className="hidden lg:block w-8 h-px bg-slate-700" />
-
-      <div className="flex-1 overflow-x-auto lg:overflow-visible w-full lg:w-auto">
-        <div className="flex flex-row lg:flex-col gap-2 min-w-max">
+      <div className="flex-1 overflow-x-auto">
+        <div className="flex flex-row gap-2 min-w-max">
           {tools.map((tool) => (
             <button
               key={tool.id}
               onClick={() => onSelectTool(tool.id)}
               className={`
-                px-2 lg:px-0 w-12 h-10 lg:h-11 rounded-xl transition-all duration-150 group relative flex items-center justify-center
+                px-2 w-12 h-10 rounded-xl transition-all duration-150 group relative flex items-center justify-center
                 ${
                   activeTool === tool.id
                     ? 'bg-slate-800 text-blue-300 shadow-inner'
@@ -79,10 +76,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, viewMode, onSelectTool, o
               {activeTool === tool.id && (
                 <div className="absolute left-0 top-2 bottom-2 w-0.5 bg-blue-400 rounded-r-full" />
               )}
-
-              <span className="hidden lg:block absolute left-14 top-1/2 -translate-y-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl border border-slate-700">
-                {tool.label}
-              </span>
             </button>
           ))}
         </div>

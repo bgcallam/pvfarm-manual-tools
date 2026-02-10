@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Toolbar from './components/Toolbar';
 import PropertiesPanel from './components/PropertiesPanel';
 import Canvas from './components/Canvas';
+import ToolPanel from './components/ToolPanel';
 import { DesignState, ToolType, ViewMode } from './types';
 import { INITIAL_PARCELS } from './fixtures';
 
@@ -17,7 +18,18 @@ const initialState: DesignState = {
     selectionScope: 'individual',
     moveCopyMode: 'move',
     activeFieldSeedId: null,
+    normalSelectionTarget: 'tracker',
+    selectedTrackerIds: [],
+    selectedRoadId: null,
+    selectedBoundaryId: null,
     osnapEnabled: true,
+    osnapCategories: {
+      rowSpacing: true,
+      roadCenterline: true,
+      roadEdge: true,
+      boundaryVertex: true,
+      boundaryEdge: false,
+    },
     smartGuidesEnabled: true,
     adaptiveRoadEditing: true,
   },
@@ -79,6 +91,9 @@ const App: React.FC = () => {
         next.flow.alignCommittedMode = null;
         next.flow.blockFillCommitted = false;
         next.ui.activeFieldSeedId = null;
+        next.ui.selectedTrackerIds = [];
+        next.ui.selectedRoadId = null;
+        next.ui.selectedBoundaryId = null;
         next.model.trackers = [];
         next.model.blocks = [];
         next.model.roads = [];
@@ -118,6 +133,10 @@ const App: React.FC = () => {
         selectionScope: 'individual',
         moveCopyMode: 'move',
         activeFieldSeedId: null,
+        normalSelectionTarget: 'tracker',
+        selectedTrackerIds: [],
+        selectedRoadId: null,
+        selectedBoundaryId: null,
       },
       flow: {
         fillCommitted: false,
@@ -190,6 +209,19 @@ const App: React.FC = () => {
         }
         case 'tab': {
           event.preventDefault();
+          if (state.ui.viewMode === 'normal') {
+            const targets: DesignState['ui']['normalSelectionTarget'][] = [
+              'tracker',
+              'road',
+              'boundary',
+            ];
+            const currentIndex = targets.indexOf(state.ui.normalSelectionTarget);
+            const nextIndex = event.shiftKey
+              ? (currentIndex - 1 + targets.length) % targets.length
+              : (currentIndex + 1) % targets.length;
+            handleStateChange({ ui: { normalSelectionTarget: targets[nextIndex] } });
+            break;
+          }
           const scopes: DesignState['ui']['selectionScope'][] = ['individual', 'row', 'field', 'all'];
           const currentIndex = scopes.indexOf(state.ui.selectionScope);
           const nextIndex = event.shiftKey
@@ -204,6 +236,9 @@ const App: React.FC = () => {
               activeTool: 'select',
               moveCopyMode: 'move',
               activeFieldSeedId: null,
+              selectedTrackerIds: [],
+              selectedRoadId: null,
+              selectedBoundaryId: null,
             },
             flow: {
               alignReferencePicked: false,
@@ -222,7 +257,7 @@ const App: React.FC = () => {
   }, [state]);
 
   return (
-    <div className="flex h-screen w-screen flex-col lg:flex-row bg-slate-950 overflow-hidden font-sans text-slate-100">
+    <div className="flex h-screen w-screen flex-col bg-slate-950 overflow-hidden font-sans text-slate-100">
       <Toolbar
         activeTool={state.ui.activeTool}
         viewMode={state.ui.viewMode}
@@ -230,7 +265,7 @@ const App: React.FC = () => {
         onSelectMode={handleModeSelect}
       />
 
-      <main className="flex-1 relative h-full bg-slate-900 min-h-[50vh]">
+      <main className="flex-1 relative bg-slate-900 min-h-[50vh]">
         <div className="absolute top-3 left-3 z-10 bg-slate-900/90 backdrop-blur shadow-sm border border-slate-700 rounded-md px-3 py-2 flex flex-wrap items-center gap-3 text-xs lg:text-sm">
           <div className="font-bold text-slate-100">PVFARM</div>
           <div className="text-slate-500">/</div>
@@ -244,13 +279,13 @@ const App: React.FC = () => {
             Mode: {state.ui.viewMode.toUpperCase()}
           </span>
           <span className="font-mono text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded">
-            Fill: {state.ui.fillPattern.toUpperCase()}
-          </span>
-          <span className="font-mono text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded">
-            Align: {state.ui.alignMode.toUpperCase()}
+            Tool: {state.ui.activeTool.toUpperCase()}
           </span>
           <span className="font-mono text-emerald-300 bg-emerald-900/30 px-2 py-0.5 rounded">
-            Select: {state.ui.selectionScope.toUpperCase()}
+            Select:{' '}
+            {state.ui.viewMode === 'normal'
+              ? state.ui.normalSelectionTarget.toUpperCase()
+              : state.ui.selectionScope.toUpperCase()}
           </span>
         </div>
 
@@ -259,14 +294,19 @@ const App: React.FC = () => {
           onTrackerCountChange={setTrackerCount}
           onFlowChange={handleStateChange}
         />
-      </main>
 
-      <PropertiesPanel
-        state={state}
-        onChange={handleStateChange}
-        trackerCount={trackerCount}
-        onResetFlow={resetFlow}
-      />
+        <ToolPanel state={state} onChange={handleStateChange} />
+
+        <div className="absolute right-4 top-16 z-20 hidden lg:block">
+          <PropertiesPanel
+            state={state}
+            onChange={handleStateChange}
+            trackerCount={trackerCount}
+            onResetFlow={resetFlow}
+            floating
+          />
+        </div>
+      </main>
     </div>
   );
 };

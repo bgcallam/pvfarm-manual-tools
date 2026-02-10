@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CANVAS_VIEWBOX,
+  CONFIG,
   DEFAULT_STRING_COUNT,
   DEFAULT_STRING_SIZE,
   MODULE_WATTAGE_W,
@@ -13,6 +14,7 @@ import {
   pointInPolygon,
 } from '../layoutEngine';
 import { DesignState, Point, Road, Tracker } from '../types';
+import { distanceToPolyline, projectPointOnSegment } from '../geometry';
 
 interface CanvasProps {
   state: DesignState;
@@ -24,9 +26,11 @@ interface SnapTarget {
   point: Point;
   label: string;
   distance: number;
+  color: string;
 }
 
 const SNAP_THRESHOLD = 16;
+const SELECTION_THRESHOLD = 18;
 
 const toPath = (points: Point[]): string => {
   if (!points.length) {
@@ -34,36 +38,6 @@ const toPath = (points: Point[]): string => {
   }
   const [first, ...rest] = points;
   return [`M ${first.x} ${first.y}`, ...rest.map((point) => `L ${point.x} ${point.y}`), 'Z'].join(' ');
-};
-
-const distanceToSegment = (point: Point, start: Point, end: Point): number => {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-
-  if (dx === 0 && dy === 0) {
-    return Math.hypot(point.x - start.x, point.y - start.y);
-  }
-
-  const t = Math.max(
-    0,
-    Math.min(
-      1,
-      ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy),
-    ),
-  );
-
-  const projectionX = start.x + t * dx;
-  const projectionY = start.y + t * dy;
-
-  return Math.hypot(point.x - projectionX, point.y - projectionY);
-};
-
-const distanceToPolyline = (point: Point, polyline: Point[]): number => {
-  let minDistance = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < polyline.length - 1; index += 1) {
-    minDistance = Math.min(minDistance, distanceToSegment(point, polyline[index], polyline[index + 1]));
-  }
-  return minDistance;
 };
 
 const getRoadCenterlineY = (road: Road): number =>
@@ -233,6 +207,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   const [extendOps, setExtendOps] = useState(0);
   const [copiedTrackers, setCopiedTrackers] = useState<Tracker[]>([]);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
+  const [isSnapSuppressed, setIsSnapSuppressed] = useState(false);
 
   const workingParcel = model.parcels.find((parcel) => parcel.isWorking);
 
@@ -244,6 +219,29 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     const timeout = window.setTimeout(() => setFlashMessage(null), 1400);
     return () => window.clearTimeout(timeout);
   }, [flashMessage]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey) {
+        setIsSnapSuppressed(true);
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (!event.altKey) {
+        setIsSnapSuppressed(false);
+      }
+    };
+    const handleBlur = () => setIsSnapSuppressed(false);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
 
   useEffect(() => {
     if (!flow.fillCommitted) {
@@ -529,6 +527,10 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     () => (workingParcel ? workingParcel.points.slice(0, 5) : []),
     [workingParcel],
   );
+  const boundaryPolyline = useMemo(
+    () => (workingParcel ? [...workingParcel.points, workingParcel.points[0]] : []),
+    [workingParcel],
+  );
 
   const isInsideWorkingParcel =
     cursorPoint !== null && pointInPolygon(cursorPoint, workingParcel.points);
@@ -558,40 +560,97 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   );
 
   const getSnapTarget = (point: Point): SnapTarget | null => {
-    if (!ui.osnapEnabled) {
+    if (!ui.osnapEnabled || isSnapSuppressed) {
       return null;
     }
 
     const roadX = Math.max(roadSegment.x1, Math.min(roadSegment.x2, point.x));
-    const candidates: SnapTarget[] = [
-      ...workingParcel.points.map((vertex) => ({
-        point: vertex,
-        label: 'Boundary vertex',
-        distance: Math.hypot(vertex.x - point.x, vertex.y - point.y),
-      })),
-      {
+    const candidates: SnapTarget[] = [];
+
+    if (ui.osnapCategories.boundaryVertex) {
+      candidates.push(
+        ...workingParcel.points.map((vertex) => ({
+          point: vertex,
+          label: 'Boundary vertex',
+          distance: Math.hypot(vertex.x - point.x, vertex.y - point.y),
+          color: '#22d3ee',
+        })),
+      );
+    }
+
+    if (ui.osnapCategories.boundaryEdge && boundaryPolyline.length > 1) {
+      let bestPoint: Point | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < boundaryPolyline.length - 1; index += 1) {
+        const start = boundaryPolyline[index];
+        const end = boundaryPolyline[index + 1];
+        const projected = projectPointOnSegment(point, start, end);
+        const distance = Math.hypot(projected.x - point.x, projected.y - point.y);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestPoint = projected;
+        }
+      }
+      if (bestPoint) {
+        candidates.push({
+          point: bestPoint,
+          label: 'Boundary edge',
+          distance: bestDistance,
+          color: '#38bdf8',
+        });
+      }
+    }
+
+    if (ui.osnapCategories.roadCenterline) {
+      candidates.push({
         point: { x: roadX, y: roadSegment.y },
         label: 'Road centerline',
         distance: Math.hypot(roadX - point.x, roadSegment.y - point.y),
-      },
-      {
-        point: { x: roadX, y: roadSegment.y - roadSegment.width / 2 },
-        label: 'Road edge',
-        distance: Math.hypot(
-          roadX - point.x,
-          roadSegment.y - roadSegment.width / 2 - point.y,
-        ),
-      },
-      {
-        point: { x: roadX, y: roadSegment.y + roadSegment.width / 2 },
-        label: 'Road edge',
-        distance: Math.hypot(
-          roadX - point.x,
-          roadSegment.y + roadSegment.width / 2 - point.y,
-        ),
-      },
-    ];
+        color: '#fb923c',
+      });
+    }
 
+    if (ui.osnapCategories.roadEdge) {
+      candidates.push(
+        {
+          point: { x: roadX, y: roadSegment.y - roadSegment.width / 2 },
+          label: 'Road edge',
+          distance: Math.hypot(
+            roadX - point.x,
+            roadSegment.y - roadSegment.width / 2 - point.y,
+          ),
+          color: '#f97316',
+        },
+        {
+          point: { x: roadX, y: roadSegment.y + roadSegment.width / 2 },
+          label: 'Road edge',
+          distance: Math.hypot(
+            roadX - point.x,
+            roadSegment.y + roadSegment.width / 2 - point.y,
+          ),
+          color: '#f97316',
+        },
+      );
+    }
+
+    if (ui.osnapCategories.rowSpacing) {
+      const rowSpacingPx = settings.rowToRow * CONFIG.pixelsPerMeter;
+      if (rowSpacingPx > 0) {
+        const snapY =
+          parcelBounds.minY +
+          Math.round((point.y - parcelBounds.minY) / rowSpacingPx) * rowSpacingPx;
+        candidates.push({
+          point: { x: point.x, y: snapY },
+          label: 'R2R spacing',
+          distance: Math.abs(point.y - snapY),
+          color: '#4ade80',
+        });
+      }
+    }
+
+    if (!candidates.length) {
+      return null;
+    }
     const sorted = candidates.sort((a, b) => a.distance - b.distance);
     return sorted[0].distance <= SNAP_THRESHOLD ? sorted[0] : null;
   };
@@ -620,7 +679,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     return getFieldBySeedId(renderedTrackers, ui.activeFieldSeedId, roadSegment.y);
   }, [ui.activeFieldSeedId, renderedTrackers, flow.fillCommitted, roadSegment.y]);
 
-  const selectedTrackers = useMemo(() => {
+  const hoverSelectionTrackers = useMemo(() => {
     if (
       !effectiveCursorPoint ||
       !renderedTrackers.length ||
@@ -641,7 +700,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         : getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
     const activeField = activeFieldTrackers.length > 0 ? activeFieldTrackers : hoverField;
 
-    if (ui.selectionScope === 'individual') {
+    if (ui.viewMode === 'normal' || ui.selectionScope === 'individual') {
       return [nearest];
     }
 
@@ -657,20 +716,46 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return hoverField;
     }
 
-    return activeField;
+    return renderedTrackers;
   }, [
     effectiveCursorPoint,
     renderedTrackers,
     ui.activeTool,
     flow.fillCommitted,
+    ui.viewMode,
     ui.selectionScope,
     ui.activeFieldSeedId,
     hoveredFieldTrackers,
     activeFieldTrackers,
     roadSegment.y,
   ]);
+  const hoverIds = new Set(hoverSelectionTrackers.map((tracker) => tracker.id));
+  const selectedIds = new Set(ui.selectedTrackerIds);
 
-  const selectIds = new Set(selectedTrackers.map((tracker) => tracker.id));
+  const normalHover = useMemo(() => {
+    if (!effectiveCursorPoint || ui.viewMode !== 'normal') {
+      return null;
+    }
+    if (ui.normalSelectionTarget === 'road') {
+      const distance = distanceToPolyline(effectiveCursorPoint, roadFromEdit.points);
+      return distance <= SELECTION_THRESHOLD ? { type: 'road' as const } : null;
+    }
+    if (ui.normalSelectionTarget === 'boundary') {
+      const distance = distanceToPolyline(effectiveCursorPoint, boundaryPolyline);
+      return distance <= SELECTION_THRESHOLD ? { type: 'boundary' as const } : null;
+    }
+    if (ui.normalSelectionTarget === 'tracker') {
+      return hoverSelectionTrackers.length ? { type: 'tracker' as const } : null;
+    }
+    return null;
+  }, [
+    effectiveCursorPoint,
+    ui.viewMode,
+    ui.normalSelectionTarget,
+    roadFromEdit.points,
+    boundaryPolyline,
+    hoverSelectionTrackers.length,
+  ]);
 
   const ilrLabel = `${settings.ilrRange[0].toFixed(2)}–${settings.ilrRange[1].toFixed(2)}`;
 
@@ -720,10 +805,13 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     }
 
     if (ui.activeTool === 'select') {
-      if (!flow.fillCommitted) {
+      if (!flow.fillCommitted && ui.viewMode !== 'normal') {
         return 'Commit Fill first';
       }
-      return `Select ${ui.selectionScope} · ${selectedTrackers.length} selected · ${ui.moveCopyMode.toUpperCase()} on click`;
+      if (ui.viewMode === 'normal') {
+        return `Select ${ui.normalSelectionTarget} · ${ui.selectedTrackerIds.length} selected`;
+      }
+      return `Select ${ui.selectionScope} · ${ui.selectedTrackerIds.length} selected`;
     }
 
     if (ui.activeTool === 'fill' && ui.viewMode === 'block') {
@@ -761,6 +849,42 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   };
 
   const onSelectAction = (clickedPoint: Point) => {
+    if (ui.viewMode === 'normal') {
+      if (ui.normalSelectionTarget === 'road') {
+        const distance = distanceToPolyline(clickedPoint, roadFromEdit.points);
+        if (distance > SELECTION_THRESHOLD) {
+          setFlashMessage('No road in selection target');
+          return;
+        }
+        onFlowChange({
+          ui: {
+            selectedTrackerIds: [],
+            selectedRoadId: roadFromEdit.id,
+            selectedBoundaryId: null,
+          },
+        });
+        setFlashMessage('Road selected');
+        return;
+      }
+
+      if (ui.normalSelectionTarget === 'boundary') {
+        const distance = distanceToPolyline(clickedPoint, boundaryPolyline);
+        if (distance > SELECTION_THRESHOLD) {
+          setFlashMessage('No boundary in selection target');
+          return;
+        }
+        onFlowChange({
+          ui: {
+            selectedTrackerIds: [],
+            selectedRoadId: null,
+            selectedBoundaryId: workingParcel.id,
+          },
+        });
+        setFlashMessage('Boundary selected');
+        return;
+      }
+    }
+
     const nearest = getNearestTracker(renderedTrackers, clickedPoint);
     if (!nearest) {
       setFlashMessage('No trackers in selection target');
@@ -770,7 +894,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     const field = getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
     const nearestCenterX = nearest.x + nearest.width / 2;
     const selection = (() => {
-      if (ui.selectionScope === 'individual') {
+      if (ui.selectionScope === 'individual' || ui.viewMode === 'normal') {
         return [nearest];
       }
 
@@ -781,46 +905,22 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         });
       }
 
-      return field;
+      if (ui.selectionScope === 'field') {
+        return field;
+      }
+
+      return renderedTrackers;
     })();
 
-    onFlowChange({ ui: { activeFieldSeedId: nearest.id } });
-
-    if (ui.moveCopyMode === 'move') {
-      setMoveOps((prev) => prev + 1);
-      setFlashMessage(`Moved ${selection.length} trackers`);
-      return;
-    }
-
-    const seed = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const step = Math.max(18, settings.roadStepDistance * 0.6);
-
-    if (ui.moveCopyMode === 'copy') {
-      const clones = selection.map((tracker, index) => ({
-        ...tracker,
-        id: `${tracker.id}-copy-${seed}-${index}`,
-        x: tracker.x + step,
-        y: tracker.y,
-      }));
-      setCopiedTrackers((prev) => [...prev, ...clones]);
-      setFlashMessage(`Copied ${selection.length} trackers`);
-      return;
-    }
-
-    const arrayClones: Tracker[] = [];
-    for (let i = 1; i <= 3; i += 1) {
-      selection.forEach((tracker, index) => {
-        arrayClones.push({
-          ...tracker,
-          id: `${tracker.id}-array-${seed}-${i}-${index}`,
-          x: tracker.x + i * step,
-          y: tracker.y + i * 4,
-        });
-      });
-    }
-
-    setCopiedTrackers((prev) => [...prev, ...arrayClones]);
-    setFlashMessage(`Array copied ${selection.length} trackers x3`);
+    onFlowChange({
+      ui: {
+        activeFieldSeedId: nearest.id,
+        selectedTrackerIds: selection.map((tracker) => tracker.id),
+        selectedRoadId: null,
+        selectedBoundaryId: null,
+      },
+    });
+    setFlashMessage(`Selected ${selection.length} tracker${selection.length === 1 ? '' : 's'}`);
   };
 
   const handleClick = (event: React.MouseEvent<SVGSVGElement>) => {
@@ -853,6 +953,9 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         },
         ui: {
           activeFieldSeedId: null,
+          selectedTrackerIds: [],
+          selectedRoadId: null,
+          selectedBoundaryId: null,
         },
       });
       setMoveOps(0);
@@ -943,7 +1046,11 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return;
     }
 
-    if (ui.activeTool === 'select' && flow.fillCommitted && clickedInsideWorkingParcel) {
+    if (ui.activeTool === 'select' && clickedInsideWorkingParcel) {
+      if (!flow.fillCommitted && ui.viewMode !== 'normal') {
+        setFlashMessage('Commit Fill first');
+        return;
+      }
       onSelectAction(clickedPoint);
     }
   };
@@ -957,6 +1064,13 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   };
 
   const roadVisible = fillPreviewActive || flow.fillCommitted;
+  const roadHighlighted =
+    ui.selectedRoadId === roadFromEdit.id || (normalHover && normalHover.type === 'road');
+  const boundaryHighlighted =
+    ui.selectedBoundaryId === workingParcel.id ||
+    (normalHover && normalHover.type === 'boundary');
+  const selectionActive =
+    ui.selectedTrackerIds.length > 0 || ui.selectedRoadId !== null || ui.selectedBoundaryId !== null;
 
   return (
     <div className="w-full h-full bg-slate-950 overflow-hidden relative select-none">
@@ -993,6 +1107,16 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           />
         ))}
 
+        {boundaryHighlighted && (
+          <path
+            d={toPath(workingParcel.points)}
+            fill="none"
+            stroke="#fbbf24"
+            strokeWidth={3}
+            strokeDasharray="6 4"
+          />
+        )}
+
         {roadVisible && (
           <g opacity={ui.viewMode === 'block' ? 0.26 : fillPreviewActive ? 0.55 : 0.9}>
             <line
@@ -1000,7 +1124,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
               y1={roadSegment.y}
               x2={roadSegment.x2}
               y2={roadSegment.y}
-              stroke="#cbd5e1"
+              stroke={roadHighlighted ? '#fbbf24' : '#cbd5e1'}
               strokeWidth={roadSegment.width}
             />
             <line
@@ -1008,7 +1132,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
               y1={roadSegment.y}
               x2={roadSegment.x2}
               y2={roadSegment.y}
-              stroke="#475569"
+              stroke={roadHighlighted ? '#f59e0b' : '#475569'}
               strokeWidth={1.5}
               strokeDasharray="8 8"
             />
@@ -1027,7 +1151,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           <g opacity={ui.viewMode === 'block' ? 0.3 : 1}>
             {renderedTrackers.map((tracker) => {
               const isPreviewNorth = alignPreviewTrackers.length > 0 && northTrackerIds.has(tracker.id);
-              const isSelected = selectIds.has(tracker.id) && ui.activeTool === 'select';
+              const isSelected = selectedIds.has(tracker.id);
               return (
                 <rect
                   key={tracker.id}
@@ -1042,6 +1166,24 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
                 />
               );
             })}
+          </g>
+        )}
+
+        {ui.activeTool === 'select' && hoverSelectionTrackers.length > 0 && (
+          <g opacity={0.9}>
+            {hoverSelectionTrackers.map((tracker) => (
+              <rect
+                key={`hover-${tracker.id}`}
+                x={tracker.x - 1}
+                y={tracker.y - 1}
+                width={tracker.width + 2}
+                height={tracker.height + 2}
+                fill="none"
+                stroke="#fbbf24"
+                strokeWidth={1}
+                strokeDasharray="3 2"
+              />
+            ))}
           </g>
         )}
 
@@ -1140,7 +1282,14 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
         {snapTarget && (
           <g>
-            <circle cx={snapTarget.point.x} cy={snapTarget.point.y} r={5} fill="#22d3ee" stroke="#cffafe" strokeWidth={1} />
+            <circle
+              cx={snapTarget.point.x}
+              cy={snapTarget.point.y}
+              r={5}
+              fill={snapTarget.color}
+              stroke="#0f172a"
+              strokeWidth={1}
+            />
             <rect x={snapTarget.point.x + 8} y={snapTarget.point.y - 16} width={96} height={16} rx={4} fill="rgba(8, 47, 73, 0.85)" />
             <text x={snapTarget.point.x + 12} y={snapTarget.point.y - 5} fill="#ecfeff" fontSize={10}>
               {snapTarget.label}
@@ -1152,6 +1301,56 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       {tooltip && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur text-white px-4 py-2 rounded-full text-sm font-medium border border-white/10 pointer-events-none">
           {tooltip}
+        </div>
+      )}
+
+      {selectionActive && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-950/90 border border-slate-700 rounded-full px-3 py-2 text-xs text-slate-100 flex items-center gap-2 shadow-xl">
+          <span className="text-slate-400 uppercase tracking-wide">Selection</span>
+          <button
+            className={`px-2 py-1 rounded-full border ${
+              ui.moveCopyMode === 'move'
+                ? 'bg-blue-600/30 border-blue-400 text-blue-100'
+                : 'bg-slate-800 border-slate-700 text-slate-300'
+            }`}
+            onClick={() => onFlowChange({ ui: { moveCopyMode: 'move' } })}
+          >
+            Move
+          </button>
+          <button
+            className={`px-2 py-1 rounded-full border ${
+              ui.moveCopyMode === 'copy'
+                ? 'bg-blue-600/30 border-blue-400 text-blue-100'
+                : 'bg-slate-800 border-slate-700 text-slate-300'
+            }`}
+            onClick={() => onFlowChange({ ui: { moveCopyMode: 'copy' } })}
+          >
+            Copy
+          </button>
+          <button
+            className={`px-2 py-1 rounded-full border ${
+              ui.moveCopyMode === 'array'
+                ? 'bg-blue-600/30 border-blue-400 text-blue-100'
+                : 'bg-slate-800 border-slate-700 text-slate-300'
+            }`}
+            onClick={() => onFlowChange({ ui: { moveCopyMode: 'array' } })}
+          >
+            Array
+          </button>
+          <button
+            className="px-2 py-1 rounded-full border border-slate-700 text-slate-300 hover:bg-slate-800"
+            onClick={() =>
+              onFlowChange({
+                ui: {
+                  selectedTrackerIds: [],
+                  selectedRoadId: null,
+                  selectedBoundaryId: null,
+                },
+              })
+            }
+          >
+            Clear
+          </button>
         </div>
       )}
 
