@@ -934,8 +934,8 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     const clickedInsideWorkingParcel = pointInPolygon(clickedPoint, workingParcel.points);
     const clickedNorthBoundary =
-      clickedPoint.y < baseRoadSegment.y + 20 &&
-      distanceToPolyline(clickedPoint, northReferencePoints) < 12;
+      rawPoint.y < baseRoadSegment.y + 20 &&
+      distanceToPolyline(rawPoint, northReferencePoints) < 12;
 
     if (
       ui.activeTool === 'fill' &&
