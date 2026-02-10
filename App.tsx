@@ -3,34 +3,52 @@ import Toolbar from './components/Toolbar';
 import PropertiesPanel from './components/PropertiesPanel';
 import Canvas from './components/Canvas';
 import { DesignState, ToolType, ViewMode } from './types';
+import { INITIAL_PARCELS } from './fixtures';
 
 const initialState: DesignState = {
-  viewMode: 'tracker',
-  activeTool: 'fill',
-  rowSpacing: 6,
-  roadWidth: 8,
-  showBlocks: true,
-  fillPattern: 'aligned',
-  alignMode: 'rigid',
-  fillCommitted: false,
-  alignReferencePicked: false,
-  alignSelectionPicked: false,
-  alignCommittedMode: null,
-  blockFillCommitted: false,
-  editSubMode: 'point',
-  trimExtendMode: 'trim',
-  selectionScope: 'individual',
-  moveCopyMode: 'move',
-  activeFieldSeedId: null,
-  osnapEnabled: true,
-  smartGuidesEnabled: true,
-  adaptiveRoadEditing: true,
-  equipmentRemovesTrackers: true,
-  blockHeight: 4,
-  roadStepDistance: 24,
-  editOps: 0,
-  trimOps: 0,
-  extendOps: 0,
+  ui: {
+    viewMode: 'tracker',
+    activeTool: 'fill',
+    showBlocks: true,
+    fillPattern: 'aligned',
+    alignMode: 'rigid',
+    editSubMode: 'point',
+    trimExtendMode: 'trim',
+    selectionScope: 'individual',
+    moveCopyMode: 'move',
+    activeFieldSeedId: null,
+    osnapEnabled: true,
+    smartGuidesEnabled: true,
+    adaptiveRoadEditing: true,
+  },
+  flow: {
+    fillCommitted: false,
+    alignReferencePicked: false,
+    alignSelectionPicked: false,
+    alignCommittedMode: null,
+    blockFillCommitted: false,
+  },
+  settings: {
+    rowToRow: 6,
+    arrayOffset: 5,
+    roadWidth: 8,
+    roadStepDistance: 24,
+    roadClearDistance: 6,
+    boundarySetback: 5,
+    blockHeight: 160,
+    blockWidth: 240,
+    gapTolerance: 2,
+    blockOffset: 5,
+    ilrRange: [1.0, 1.25],
+    objectRemovesUnderlying: true,
+  },
+  model: {
+    parcels: INITIAL_PARCELS,
+    roads: [],
+    trackers: [],
+    skids: [],
+    blocks: [],
+  },
 };
 
 const App: React.FC = () => {
@@ -39,26 +57,40 @@ const App: React.FC = () => {
 
   const handleStateChange = (updates: Partial<DesignState>) => {
     setState((prev) => {
-      const next = { ...prev, ...updates };
+      const next: DesignState = {
+        ...prev,
+        ui: { ...prev.ui, ...updates.ui },
+        flow: { ...prev.flow, ...updates.flow },
+        settings: { ...prev.settings, ...updates.settings },
+        model: { ...prev.model, ...updates.model },
+      };
 
       const generatorInputsChanged =
-        (updates.fillPattern !== undefined && updates.fillPattern !== prev.fillPattern) ||
-        (updates.rowSpacing !== undefined && updates.rowSpacing !== prev.rowSpacing) ||
-        (updates.roadWidth !== undefined && updates.roadWidth !== prev.roadWidth);
+        (updates.ui?.fillPattern !== undefined &&
+          updates.ui.fillPattern !== prev.ui.fillPattern) ||
+        (updates.settings?.rowToRow !== undefined &&
+          updates.settings.rowToRow !== prev.settings.rowToRow) ||
+        (updates.settings?.roadWidth !== undefined &&
+          updates.settings.roadWidth !== prev.settings.roadWidth);
 
-      if (generatorInputsChanged && next.fillCommitted) {
-        next.alignReferencePicked = false;
-        next.alignSelectionPicked = false;
-        next.alignCommittedMode = null;
-        next.blockFillCommitted = false;
-        next.editOps = 0;
-        next.trimOps = 0;
-        next.extendOps = 0;
-        next.activeFieldSeedId = null;
+      if (generatorInputsChanged && next.flow.fillCommitted) {
+        next.flow.alignReferencePicked = false;
+        next.flow.alignSelectionPicked = false;
+        next.flow.alignCommittedMode = null;
+        next.flow.blockFillCommitted = false;
+        next.ui.activeFieldSeedId = null;
+        next.model.trackers = [];
+        next.model.blocks = [];
+        next.model.roads = [];
+        next.model.skids = [];
       }
 
-      if (updates.viewMode === 'tracker' && prev.viewMode !== 'tracker' && next.activeTool === 'select') {
-        next.activeTool = 'fill';
+      if (
+        updates.ui?.viewMode === 'tracker' &&
+        prev.ui.viewMode !== 'tracker' &&
+        next.ui.activeTool === 'select'
+      ) {
+        next.ui.activeTool = 'fill';
       }
 
       return next;
@@ -66,32 +98,41 @@ const App: React.FC = () => {
   };
 
   const handleToolSelect = (tool: ToolType) => {
-    handleStateChange({ activeTool: tool });
+    handleStateChange({ ui: { activeTool: tool } });
   };
 
   const handleModeSelect = (mode: ViewMode) => {
-    handleStateChange({ viewMode: mode });
+    handleStateChange({ ui: { viewMode: mode } });
   };
 
   const resetFlow = () => {
     setState((prev) => ({
       ...prev,
-      activeTool: 'fill',
-      viewMode: 'tracker',
-      alignMode: 'rigid',
-      fillCommitted: false,
-      alignReferencePicked: false,
-      alignSelectionPicked: false,
-      alignCommittedMode: null,
-      blockFillCommitted: false,
-      editSubMode: 'point',
-      trimExtendMode: 'trim',
-      selectionScope: 'individual',
-      moveCopyMode: 'move',
-      activeFieldSeedId: null,
-      editOps: 0,
-      trimOps: 0,
-      extendOps: 0,
+      ui: {
+        ...prev.ui,
+        activeTool: 'fill',
+        viewMode: 'tracker',
+        alignMode: 'rigid',
+        editSubMode: 'point',
+        trimExtendMode: 'trim',
+        selectionScope: 'individual',
+        moveCopyMode: 'move',
+        activeFieldSeedId: null,
+      },
+      flow: {
+        fillCommitted: false,
+        alignReferencePicked: false,
+        alignSelectionPicked: false,
+        alignCommittedMode: null,
+        blockFillCommitted: false,
+      },
+      model: {
+        ...prev.model,
+        roads: [],
+        trackers: [],
+        skids: [],
+        blocks: [],
+      },
     }));
   };
 
@@ -114,52 +155,60 @@ const App: React.FC = () => {
         case ' ': {
           event.preventDefault();
 
-          if (state.activeTool === 'fill' && state.viewMode === 'tracker') {
-            const patterns: DesignState['fillPattern'][] = ['aligned', 'max', 'mega'];
-            const nextIndex = (patterns.indexOf(state.fillPattern) + 1) % patterns.length;
-            handleStateChange({ fillPattern: patterns[nextIndex] });
+          if (state.ui.activeTool === 'fill' && state.ui.viewMode === 'tracker') {
+            const patterns: DesignState['ui']['fillPattern'][] = ['aligned', 'max', 'mega'];
+            const nextIndex = (patterns.indexOf(state.ui.fillPattern) + 1) % patterns.length;
+            handleStateChange({ ui: { fillPattern: patterns[nextIndex] } });
             return;
           }
 
           if (
-            state.activeTool === 'align' &&
-            state.viewMode === 'tracker' &&
-            state.alignSelectionPicked
+            state.ui.activeTool === 'align' &&
+            state.ui.viewMode === 'tracker' &&
+            state.flow.alignSelectionPicked
           ) {
-            handleStateChange({ alignMode: state.alignMode === 'rigid' ? 'noodle' : 'rigid' });
+            handleStateChange({
+              ui: { alignMode: state.ui.alignMode === 'rigid' ? 'noodle' : 'rigid' },
+            });
             return;
           }
 
-          if (state.activeTool === 'edit') {
-            const modes: DesignState['editSubMode'][] = ['point', 'segment', 'add_remove'];
-            const nextIndex = (modes.indexOf(state.editSubMode) + 1) % modes.length;
-            handleStateChange({ editSubMode: modes[nextIndex] });
+          if (state.ui.activeTool === 'edit') {
+            const modes: DesignState['ui']['editSubMode'][] = ['point', 'segment', 'add_remove'];
+            const nextIndex = (modes.indexOf(state.ui.editSubMode) + 1) % modes.length;
+            handleStateChange({ ui: { editSubMode: modes[nextIndex] } });
             return;
           }
 
-          if (state.activeTool === 'trim') {
-            handleStateChange({ trimExtendMode: state.trimExtendMode === 'trim' ? 'extend' : 'trim' });
+          if (state.ui.activeTool === 'trim') {
+            handleStateChange({
+              ui: { trimExtendMode: state.ui.trimExtendMode === 'trim' ? 'extend' : 'trim' },
+            });
             return;
           }
           break;
         }
         case 'tab': {
           event.preventDefault();
-          const scopes: DesignState['selectionScope'][] = ['individual', 'row', 'field', 'all'];
-          const currentIndex = scopes.indexOf(state.selectionScope);
+          const scopes: DesignState['ui']['selectionScope'][] = ['individual', 'row', 'field', 'all'];
+          const currentIndex = scopes.indexOf(state.ui.selectionScope);
           const nextIndex = event.shiftKey
             ? (currentIndex - 1 + scopes.length) % scopes.length
             : (currentIndex + 1) % scopes.length;
-          handleStateChange({ selectionScope: scopes[nextIndex] });
+          handleStateChange({ ui: { selectionScope: scopes[nextIndex] } });
           break;
         }
         case 'escape': {
           handleStateChange({
-            activeTool: 'select',
-            alignReferencePicked: false,
-            alignSelectionPicked: false,
-            moveCopyMode: 'move',
-            activeFieldSeedId: null,
+            ui: {
+              activeTool: 'select',
+              moveCopyMode: 'move',
+              activeFieldSeedId: null,
+            },
+            flow: {
+              alignReferencePicked: false,
+              alignSelectionPicked: false,
+            },
           });
           break;
         }
@@ -170,23 +219,13 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    state.activeTool,
-    state.alignCommittedMode,
-    state.alignMode,
-    state.alignSelectionPicked,
-    state.editSubMode,
-    state.fillPattern,
-    state.selectionScope,
-    state.trimExtendMode,
-    state.viewMode,
-  ]);
+  }, [state]);
 
   return (
     <div className="flex h-screen w-screen flex-col lg:flex-row bg-slate-950 overflow-hidden font-sans text-slate-100">
       <Toolbar
-        activeTool={state.activeTool}
-        viewMode={state.viewMode}
+        activeTool={state.ui.activeTool}
+        viewMode={state.ui.viewMode}
         onSelectTool={handleToolSelect}
         onSelectMode={handleModeSelect}
       />
@@ -202,16 +241,16 @@ const App: React.FC = () => {
           <div className="w-px h-4 bg-slate-600 mx-1 hidden sm:block" />
 
           <span className="font-mono text-cyan-300 bg-cyan-900/30 px-2 py-0.5 rounded">
-            Mode: {state.viewMode.toUpperCase()}
+            Mode: {state.ui.viewMode.toUpperCase()}
           </span>
           <span className="font-mono text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded">
-            Fill: {state.fillPattern.toUpperCase()}
+            Fill: {state.ui.fillPattern.toUpperCase()}
           </span>
           <span className="font-mono text-amber-300 bg-amber-900/30 px-2 py-0.5 rounded">
-            Align: {state.alignMode.toUpperCase()}
+            Align: {state.ui.alignMode.toUpperCase()}
           </span>
           <span className="font-mono text-emerald-300 bg-emerald-900/30 px-2 py-0.5 rounded">
-            Select: {state.selectionScope.toUpperCase()}
+            Select: {state.ui.selectionScope.toUpperCase()}
           </span>
         </div>
 

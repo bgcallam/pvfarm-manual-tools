@@ -13,6 +13,17 @@ import {
   Move,
   Copy,
 } from 'lucide-react';
+import {
+  DEFAULT_STRING_COUNT,
+  DEFAULT_STRING_SIZE,
+  MODULE_WATTAGE_W,
+} from '../constants';
+import {
+  estimateRows,
+  estimateStringsRange,
+  formatApproxRows,
+  formatApproxStrings,
+} from '../layoutEstimates';
 
 interface PropertiesPanelProps {
   state: DesignState;
@@ -49,13 +60,23 @@ const PillButton: React.FC<{
   </button>
 );
 
+const METERS_TO_FEET = 3.28084;
+
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   state,
   onChange,
   trackerCount,
   onResetFlow,
 }) => {
-  const capacity = (trackerCount * 0.0092).toFixed(2);
+  const trackerDcKw =
+    (DEFAULT_STRING_COUNT * DEFAULT_STRING_SIZE * MODULE_WATTAGE_W) / 1000;
+  const capacityMw = ((trackerCount * trackerDcKw) / 1000).toFixed(2);
+  const rowToRowFt = state.settings.rowToRow * METERS_TO_FEET;
+  const blockWidthRows = estimateRows(state.settings.blockWidth, rowToRowFt);
+  const blockHeightStrings = estimateStringsRange(
+    state.settings.blockHeight,
+    rowToRowFt
+  );
 
   return (
     <div className="w-full lg:w-80 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-[45vh] lg:h-full text-slate-300 z-20 shadow-2xl">
@@ -77,7 +98,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           <div className="p-3 border-r border-slate-800">
             <div className="text-[10px] text-slate-500 font-mono mb-1">CAPACITY</div>
             <div className="text-lg font-bold text-white">
-              {capacity} <span className="text-xs font-normal text-slate-500">MW</span>
+              {capacityMw} <span className="text-xs font-normal text-slate-500">MW</span>
             </div>
           </div>
           <div className="p-3">
@@ -97,7 +118,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <div className="flex justify-between mb-1">
                   <label className="text-sm font-medium text-slate-300">Row Spacing (R2R)</label>
                   <span className="text-xs font-mono text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded">
-                    {state.rowSpacing}m
+                    {state.settings.rowToRow}m
                   </span>
                 </div>
                 <input
@@ -105,8 +126,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   min="4"
                   max="11"
                   step="0.5"
-                  value={state.rowSpacing}
-                  onChange={(event) => onChange({ rowSpacing: parseFloat(event.target.value) })}
+                  value={state.settings.rowToRow}
+                  onChange={(event) =>
+                    onChange({ settings: { rowToRow: parseFloat(event.target.value) } })
+                  }
                   className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                 />
               </div>
@@ -115,7 +138,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <div className="flex justify-between mb-1">
                   <label className="text-sm font-medium text-slate-300">Road Width</label>
                   <span className="text-xs font-mono text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded">
-                    {state.roadWidth}m
+                    {state.settings.roadWidth}m
                   </span>
                 </div>
                 <input
@@ -123,8 +146,37 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   min="6"
                   max="14"
                   step="0.5"
-                  value={state.roadWidth}
-                  onChange={(event) => onChange({ roadWidth: parseFloat(event.target.value) })}
+                  value={state.settings.roadWidth}
+                  onChange={(event) =>
+                    onChange({ settings: { roadWidth: parseFloat(event.target.value) } })
+                  }
+                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium text-slate-300">Block Width</label>
+                  <span className="text-xs font-mono text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded">
+                    {state.settings.blockWidth}ft
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500 mb-1">
+                  {formatApproxRows(
+                    state.settings.blockWidth,
+                    'ft',
+                    blockWidthRows
+                  )}
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="300"
+                  step="10"
+                  value={state.settings.blockWidth}
+                  onChange={(event) =>
+                    onChange({ settings: { blockWidth: parseInt(event.target.value, 10) } })
+                  }
                   className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                 />
               </div>
@@ -133,16 +185,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <div className="flex justify-between mb-1">
                   <label className="text-sm font-medium text-slate-300">Block Height</label>
                   <span className="text-xs font-mono text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded">
-                    {state.blockHeight}
+                    {state.settings.blockHeight}ft
                   </span>
+                </div>
+                <div className="text-[10px] text-slate-500 mb-1">
+                  {formatApproxStrings(
+                    state.settings.blockHeight,
+                    'ft',
+                    blockHeightStrings
+                  )}
                 </div>
                 <input
                   type="range"
-                  min="2"
-                  max="8"
-                  step="1"
-                  value={state.blockHeight}
-                  onChange={(event) => onChange({ blockHeight: parseInt(event.target.value, 10) })}
+                  min="50"
+                  max="300"
+                  step="10"
+                  value={state.settings.blockHeight}
+                  onChange={(event) =>
+                    onChange({ settings: { blockHeight: parseInt(event.target.value, 10) } })
+                  }
                   className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                 />
               </div>
@@ -158,32 +219,34 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span className="flex items-center gap-1"><Magnet size={12} /> Running OSnap</span>
                 <input
                   type="checkbox"
-                  checked={state.osnapEnabled}
-                  onChange={(event) => onChange({ osnapEnabled: event.target.checked })}
+                  checked={state.ui.osnapEnabled}
+                  onChange={(event) => onChange({ ui: { osnapEnabled: event.target.checked } })}
                 />
               </label>
               <label className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1"><Waypoints size={12} /> Smart Guides</span>
                 <input
                   type="checkbox"
-                  checked={state.smartGuidesEnabled}
-                  onChange={(event) => onChange({ smartGuidesEnabled: event.target.checked })}
+                  checked={state.ui.smartGuidesEnabled}
+                  onChange={(event) => onChange({ ui: { smartGuidesEnabled: event.target.checked } })}
                 />
               </label>
               <label className="flex items-center justify-between gap-2">
                 <span>Adaptive road editing</span>
                 <input
                   type="checkbox"
-                  checked={state.adaptiveRoadEditing}
-                  onChange={(event) => onChange({ adaptiveRoadEditing: event.target.checked })}
+                  checked={state.ui.adaptiveRoadEditing}
+                  onChange={(event) => onChange({ ui: { adaptiveRoadEditing: event.target.checked } })}
                 />
               </label>
               <label className="flex items-center justify-between gap-2">
-                <span>Equipment removes trackers</span>
+                <span>Objects remove underlying</span>
                 <input
                   type="checkbox"
-                  checked={state.equipmentRemovesTrackers}
-                  onChange={(event) => onChange({ equipmentRemovesTrackers: event.target.checked })}
+                  checked={state.settings.objectRemovesUnderlying}
+                  onChange={(event) =>
+                    onChange({ settings: { objectRemovesUnderlying: event.target.checked } })
+                  }
                 />
               </label>
             </div>
@@ -194,26 +257,42 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <Maximize2 size={12} /> Context Controls
             </div>
             <div className="space-y-2 bg-slate-800/30 rounded-lg p-3 border border-slate-700/50 text-xs">
-              <div>Active tool: <span className="text-slate-100 uppercase">{state.activeTool}</span></div>
-              {state.activeTool === 'edit' && <div>Edit sub-mode: <span className="text-cyan-300">{state.editSubMode}</span> (`Space` cycles)</div>}
-              {state.activeTool === 'trim' && <div>Trim/Extend mode: <span className="text-cyan-300">{state.trimExtendMode}</span> (`Space` toggles)</div>}
-              {state.activeTool === 'select' && (
+              <div>Active tool: <span className="text-slate-100 uppercase">{state.ui.activeTool}</span></div>
+              {state.ui.activeTool === 'edit' && (
+                <div>Edit sub-mode: <span className="text-cyan-300">{state.ui.editSubMode}</span> (`Space` cycles)</div>
+              )}
+              {state.ui.activeTool === 'trim' && (
+                <div>Trim/Extend mode: <span className="text-cyan-300">{state.ui.trimExtendMode}</span> (`Space` toggles)</div>
+              )}
+              {state.ui.activeTool === 'select' && (
                 <>
-                  <div>Selection scope: <span className="text-cyan-300">{state.selectionScope}</span> (`Tab` cycles)</div>
+                  <div>Selection scope: <span className="text-cyan-300">{state.ui.selectionScope}</span> (`Tab` cycles)</div>
                   <div>All = contiguous array field (single-site)</div>
                   <div className="flex gap-2 pt-1">
-                    <PillButton active={state.moveCopyMode === 'move'} label="Move" onClick={() => onChange({ moveCopyMode: 'move' })} />
-                    <PillButton active={state.moveCopyMode === 'copy'} label="Copy" onClick={() => onChange({ moveCopyMode: 'copy' })} />
-                    <PillButton active={state.moveCopyMode === 'array'} label="Array" onClick={() => onChange({ moveCopyMode: 'array' })} />
+                    <PillButton
+                      active={state.ui.moveCopyMode === 'move'}
+                      label="Move"
+                      onClick={() => onChange({ ui: { moveCopyMode: 'move' } })}
+                    />
+                    <PillButton
+                      active={state.ui.moveCopyMode === 'copy'}
+                      label="Copy"
+                      onClick={() => onChange({ ui: { moveCopyMode: 'copy' } })}
+                    />
+                    <PillButton
+                      active={state.ui.moveCopyMode === 'array'}
+                      label="Array"
+                      onClick={() => onChange({ ui: { moveCopyMode: 'array' } })}
+                    />
                   </div>
                 </>
               )}
-              <div>Active field seed: <span className="text-cyan-300">{state.activeFieldSeedId ?? 'none'}</span></div>
-              {state.activeTool === 'fill' && (
-                <div>Fill pattern: <span className="text-cyan-300">{state.fillPattern}</span> (`Space` cycles)</div>
+              <div>Active field seed: <span className="text-cyan-300">{state.ui.activeFieldSeedId ?? 'none'}</span></div>
+              {state.ui.activeTool === 'fill' && (
+                <div>Fill pattern: <span className="text-cyan-300">{state.ui.fillPattern}</span> (`Space` cycles)</div>
               )}
-              {state.activeTool === 'align' && (
-                <div>Align type: <span className="text-cyan-300">{state.alignMode}</span> (`Space` toggles)</div>
+              {state.ui.activeTool === 'align' && (
+                <div>Align type: <span className="text-cyan-300">{state.ui.alignMode}</span> (`Space` toggles)</div>
               )}
             </div>
           </section>
@@ -223,13 +302,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <Move size={12} /> Workflow Status
             </div>
             <div className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/70 space-y-2">
-              <StepRow done={state.fillCommitted} label="1. Tracker fill committed" />
-              <StepRow done={state.alignReferencePicked} label="2. Align reference picked" />
-              <StepRow done={state.alignSelectionPicked} label="3. North field selected" />
-              <StepRow done={!!state.alignCommittedMode} label={`4. Align committed${state.alignCommittedMode ? ` (${state.alignCommittedMode})` : ''}`} />
-              <StepRow done={state.blockFillCommitted} label="5. Block fill committed" />
-              <StepRow done={state.editOps > 0} label={`6. Edit actions (${state.editOps})`} />
-              <StepRow done={state.trimOps + state.extendOps > 0} label={`7. Trim/Extend actions (${state.trimOps + state.extendOps})`} />
+              <StepRow done={state.flow.fillCommitted} label="1. Tracker fill committed" />
+              <StepRow done={state.flow.alignReferencePicked} label="2. Align reference picked" />
+              <StepRow done={state.flow.alignSelectionPicked} label="3. North field selected" />
+              <StepRow
+                done={!!state.flow.alignCommittedMode}
+                label={`4. Align committed${state.flow.alignCommittedMode ? ` (${state.flow.alignCommittedMode})` : ''}`}
+              />
+              <StepRow done={state.flow.blockFillCommitted} label="5. Block fill committed" />
             </div>
           </section>
 

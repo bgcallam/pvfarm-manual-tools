@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CANVAS_VIEWBOX,
-  NORTH_REFERENCE_POINTS,
-  PARCELS,
-  TRACKER_BORDER_SETBACK_PX,
+  DEFAULT_STRING_COUNT,
+  DEFAULT_STRING_SIZE,
+  MODULE_WATTAGE_W,
 } from '../constants';
 import {
   applyNorthFieldAlignment,
@@ -12,7 +12,7 @@ import {
   getParcelBounds,
   pointInPolygon,
 } from '../layoutEngine';
-import { DesignState, Point, Tracker } from '../types';
+import { DesignState, Point, Road, Tracker } from '../types';
 
 interface CanvasProps {
   state: DesignState;
@@ -64,6 +64,38 @@ const distanceToPolyline = (point: Point, polyline: Point[]): number => {
     minDistance = Math.min(minDistance, distanceToSegment(point, polyline[index], polyline[index + 1]));
   }
   return minDistance;
+};
+
+const getRoadCenterlineY = (road: Road): number =>
+  road.points.reduce((sum, point) => sum + point.y, 0) / Math.max(road.points.length, 1);
+
+const getRoadSegment = (road: Road) => {
+  const xs = road.points.map((point) => point.x);
+  const x1 = Math.min(...xs);
+  const x2 = Math.max(...xs);
+  return {
+    x1,
+    x2,
+    y: getRoadCenterlineY(road),
+    width: road.width,
+  };
+};
+
+const getPolygonBounds = (points: Point[]) => {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
 };
 
 const isNorthOfRoad = (tracker: Tracker, roadY: number): boolean =>
@@ -192,13 +224,17 @@ const applyMoveOffset = (
 };
 
 const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChange }) => {
+  const { ui, flow, settings, model } = state;
   const svgRef = useRef<SVGSVGElement>(null);
   const [cursorPoint, setCursorPoint] = useState<Point | null>(null);
   const [moveOps, setMoveOps] = useState(0);
+  const [editOps, setEditOps] = useState(0);
+  const [trimOps, setTrimOps] = useState(0);
+  const [extendOps, setExtendOps] = useState(0);
   const [copiedTrackers, setCopiedTrackers] = useState<Tracker[]>([]);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
 
-  const workingParcel = PARCELS.find((parcel) => parcel.isWorking);
+  const workingParcel = model.parcels.find((parcel) => parcel.isWorking);
 
   useEffect(() => {
     if (!flashMessage) {
@@ -210,11 +246,14 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   }, [flashMessage]);
 
   useEffect(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       setMoveOps(0);
+      setEditOps(0);
+      setTrimOps(0);
+      setExtendOps(0);
       setCopiedTrackers([]);
     }
-  }, [state.fillCommitted]);
+  }, [flow.fillCommitted]);
 
   const baseLayout = useMemo(() => {
     if (!workingParcel) {
@@ -223,80 +262,92 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     return generateTrackerLayout(
       workingParcel,
-      state.fillPattern,
-      state.rowSpacing,
-      state.roadWidth,
+      ui.fillPattern,
+      settings.rowToRow,
+      settings.roadWidth,
     );
-  }, [workingParcel, state.fillPattern, state.rowSpacing, state.roadWidth]);
+  }, [workingParcel, ui.fillPattern, settings.rowToRow, settings.roadWidth]);
 
   if (!baseLayout || !workingParcel) {
     return <div className="w-full h-full bg-slate-950" />;
   }
 
   const parcelBounds = getParcelBounds(workingParcel);
+  const baseRoadSegment = useMemo(() => getRoadSegment(baseLayout.road), [baseLayout.road]);
 
   const trackersAfterAlign = useMemo(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       return [];
     }
 
-    if (state.alignCommittedMode) {
+    if (flow.alignCommittedMode) {
       return applyNorthFieldAlignment(
         baseLayout.trackers,
         workingParcel,
         baseLayout.road,
-        state.alignCommittedMode,
+        settings,
+        flow.alignCommittedMode,
       );
     }
 
     return baseLayout.trackers;
-  }, [baseLayout.trackers, baseLayout.road, state.fillCommitted, state.alignCommittedMode, workingParcel]);
+  }, [
+    baseLayout.trackers,
+    baseLayout.road,
+    flow.fillCommitted,
+    flow.alignCommittedMode,
+    settings,
+    workingParcel,
+  ]);
 
   const activeFieldSide = useMemo<'north' | 'south' | null>(() => {
-    if (!state.activeFieldSeedId) {
+    if (!ui.activeFieldSeedId) {
       return null;
     }
 
-    const seed = trackersAfterAlign.find((tracker) => tracker.id === state.activeFieldSeedId);
+    const seed = trackersAfterAlign.find((tracker) => tracker.id === ui.activeFieldSeedId);
     if (!seed) {
       return null;
     }
 
-    return isNorthOfRoad(seed, baseLayout.road.y) ? 'north' : 'south';
-  }, [state.activeFieldSeedId, trackersAfterAlign, baseLayout.road.y]);
+    return isNorthOfRoad(seed, baseRoadSegment.y) ? 'north' : 'south';
+  }, [ui.activeFieldSeedId, trackersAfterAlign, baseRoadSegment.y]);
 
   const roadFromEdit = useMemo(() => {
-    const shift = state.editOps * (state.adaptiveRoadEditing ? 2.5 : 1.6);
+    const shift = editOps * (ui.adaptiveRoadEditing ? 2.5 : 1.6);
     const direction = activeFieldSide === 'south' ? 1 : -1;
+    const delta = shift * direction;
     return {
       ...baseLayout.road,
-      y: baseLayout.road.y + shift * direction,
+      points: baseLayout.road.points.map((point) => ({ ...point, y: point.y + delta })),
     };
-  }, [baseLayout.road, state.editOps, state.adaptiveRoadEditing, activeFieldSide]);
+  }, [baseLayout.road, editOps, ui.adaptiveRoadEditing, activeFieldSide]);
+
+  const roadSegment = useMemo(() => getRoadSegment(roadFromEdit), [roadFromEdit]);
 
   const activeFieldIds = useMemo<Set<string> | null>(() => {
-    if (!state.fillCommitted || !state.activeFieldSeedId) {
+    if (!flow.fillCommitted || !ui.activeFieldSeedId) {
       return null;
     }
 
-    const fieldTrackers = getFieldBySeedId(trackersAfterAlign, state.activeFieldSeedId, baseLayout.road.y);
+    const fieldTrackers = getFieldBySeedId(trackersAfterAlign, ui.activeFieldSeedId, roadSegment.y);
     if (!fieldTrackers.length) {
       return null;
     }
 
     return new Set(fieldTrackers.map((tracker) => tracker.id));
-  }, [state.fillCommitted, state.activeFieldSeedId, trackersAfterAlign, baseLayout.road.y]);
+  }, [flow.fillCommitted, ui.activeFieldSeedId, trackersAfterAlign, roadSegment.y]);
 
   const trackersAfterEdit = useMemo(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       return [];
     }
 
     let trackers = trackersAfterAlign;
 
-    if (state.editOps > 0) {
-      const influence = state.editSubMode === 'segment' ? 1.4 : state.editSubMode === 'add_remove' ? 0.9 : 1;
-      const nudge = Math.round(state.editOps * 1.2 * influence);
+    if (editOps > 0) {
+      const influence = ui.editSubMode === 'segment' ? 1.4 : ui.editSubMode === 'add_remove' ? 0.9 : 1;
+      const nudge = Math.round(editOps * 1.2 * influence);
 
       trackers = trackers
         .map((tracker) => {
@@ -304,12 +355,12 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
             return tracker;
           }
 
-          const distanceToRoad = Math.abs(tracker.y + tracker.height / 2 - roadFromEdit.y);
+          const distanceToRoad = Math.abs(tracker.y + tracker.height / 2 - roadSegment.y);
           if (distanceToRoad > 140) {
             return tracker;
           }
 
-          const towardEdge = tracker.y + tracker.height / 2 < roadFromEdit.y ? -1 : 1;
+          const towardEdge = tracker.y + tracker.height / 2 < roadSegment.y ? -1 : 1;
           return {
             ...tracker,
             y: tracker.y + towardEdge * nudge,
@@ -320,43 +371,43 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
             return true;
           }
 
-          if (!state.equipmentRemovesTrackers && state.editSubMode !== 'add_remove') {
+          if (!settings.objectRemovesUnderlying && ui.editSubMode !== 'add_remove') {
             return true;
           }
 
-          const distanceToRoad = Math.abs(tracker.y + tracker.height / 2 - roadFromEdit.y);
-          return distanceToRoad > roadFromEdit.width / 2 + 7;
+          const distanceToRoad = Math.abs(tracker.y + tracker.height / 2 - roadSegment.y);
+          return distanceToRoad > roadSegment.width / 2 + 7;
         });
     }
 
     return trackers;
   }, [
-    state.fillCommitted,
-    state.editOps,
-    state.editSubMode,
-    state.equipmentRemovesTrackers,
+    flow.fillCommitted,
+    editOps,
+    ui.editSubMode,
+    settings.objectRemovesUnderlying,
     activeFieldIds,
     trackersAfterAlign,
-    roadFromEdit,
+    roadSegment,
   ]);
 
   const trackersAfterTrimExtend = useMemo(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       return [];
     }
 
     let trackers = trackersAfterEdit;
 
-    if (state.trimOps > 0) {
-      const northCutoff = parcelBounds.minY + 26 + state.trimOps * 11;
-      const southCutoff = parcelBounds.maxY - 26 - state.trimOps * 11;
+    if (trimOps > 0) {
+      const northCutoff = parcelBounds.minY + 26 + trimOps * 11;
+      const southCutoff = parcelBounds.maxY - 26 - trimOps * 11;
 
       trackers = trackers.filter((tracker) => {
         if (activeFieldIds && !activeFieldIds.has(tracker.id)) {
           return true;
         }
 
-        if (tracker.y + tracker.height / 2 < roadFromEdit.y) {
+        if (tracker.y + tracker.height / 2 < roadSegment.y) {
           return tracker.y > northCutoff;
         }
 
@@ -364,7 +415,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       });
     }
 
-    if (state.extendOps > 0) {
+    if (extendOps > 0) {
       const sourceRows = groupRows(
         trackers.filter((tracker) => (activeFieldIds ? activeFieldIds.has(tracker.id) : true)),
       );
@@ -372,7 +423,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       const rowsToExtend = sourceRows.length ? [sourceRows[0], sourceRows[sourceRows.length - 1]].filter(Boolean) : [];
       const additions: Tracker[] = [];
 
-      for (let op = 1; op <= state.extendOps; op += 1) {
+      for (let op = 1; op <= extendOps; op += 1) {
         rowsToExtend.forEach((row, rowIndex) => {
           if (!row || !row.length) {
             return;
@@ -401,101 +452,117 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     return trackers;
   }, [
-    state.fillCommitted,
-    state.trimOps,
-    state.extendOps,
+    flow.fillCommitted,
+    trimOps,
+    extendOps,
     activeFieldIds,
     trackersAfterEdit,
-    roadFromEdit.y,
+    roadSegment.y,
     parcelBounds.minY,
     parcelBounds.maxY,
     workingParcel.points,
   ]);
 
   const trackersAfterMove = useMemo(
-    () => applyMoveOffset(trackersAfterTrimExtend, roadFromEdit.y, state.activeFieldSeedId, moveOps),
-    [trackersAfterTrimExtend, roadFromEdit.y, state.activeFieldSeedId, moveOps],
+    () => applyMoveOffset(trackersAfterTrimExtend, roadSegment.y, ui.activeFieldSeedId, moveOps),
+    [trackersAfterTrimExtend, roadSegment.y, ui.activeFieldSeedId, moveOps],
   );
 
   const renderedTrackers = useMemo(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       return [];
     }
 
     return [...trackersAfterMove, ...copiedTrackers];
-  }, [state.fillCommitted, trackersAfterMove, copiedTrackers]);
+  }, [flow.fillCommitted, trackersAfterMove, copiedTrackers]);
 
   const alignPreviewTrackers = useMemo(() => {
     if (
-      !state.fillCommitted ||
-      !state.alignReferencePicked ||
-      !state.alignSelectionPicked ||
-      state.alignCommittedMode
+      !flow.fillCommitted ||
+      !flow.alignReferencePicked ||
+      !flow.alignSelectionPicked ||
+      flow.alignCommittedMode
     ) {
       return [];
     }
 
-    return applyNorthFieldAlignment(baseLayout.trackers, workingParcel, baseLayout.road, state.alignMode);
+    return applyNorthFieldAlignment(
+      baseLayout.trackers,
+      workingParcel,
+      baseLayout.road,
+      settings,
+      ui.alignMode,
+    );
   }, [
     baseLayout.trackers,
     baseLayout.road,
-    state.fillCommitted,
-    state.alignReferencePicked,
-    state.alignSelectionPicked,
-    state.alignCommittedMode,
-    state.alignMode,
+    flow.fillCommitted,
+    flow.alignReferencePicked,
+    flow.alignSelectionPicked,
+    flow.alignCommittedMode,
+    ui.alignMode,
+    settings,
     workingParcel,
   ]);
 
   const blockMasks = useMemo(() => {
-    if (!state.fillCommitted) {
+    if (!flow.fillCommitted) {
       return [];
     }
-    return generateBlockMasks(renderedTrackers, roadFromEdit);
-  }, [renderedTrackers, roadFromEdit, state.fillCommitted]);
+    return generateBlockMasks(renderedTrackers, roadFromEdit, settings);
+  }, [renderedTrackers, roadFromEdit, settings, flow.fillCommitted]);
 
   const previewCapacityMw = useMemo(() => {
     if (!baseLayout.trackers.length) {
       return '0.0';
     }
-    return (baseLayout.trackers.length * 0.0092).toFixed(1);
+    const trackerDcKw =
+      (DEFAULT_STRING_COUNT * DEFAULT_STRING_SIZE * MODULE_WATTAGE_W) / 1000;
+    return ((baseLayout.trackers.length * trackerDcKw) / 1000).toFixed(1);
   }, [baseLayout.trackers.length]);
 
   useEffect(() => {
     onTrackerCountChange(renderedTrackers.length);
   }, [renderedTrackers.length, onTrackerCountChange]);
 
+  const northReferencePoints = useMemo(
+    () => (workingParcel ? workingParcel.points.slice(0, 5) : []),
+    [workingParcel],
+  );
+
   const isInsideWorkingParcel =
     cursorPoint !== null && pointInPolygon(cursorPoint, workingParcel.points);
 
   const isHoveringNorthBoundary =
     cursorPoint !== null &&
-    cursorPoint.y < baseLayout.road.y + 24 &&
-    distanceToPolyline(cursorPoint, NORTH_REFERENCE_POINTS) < 12;
+    cursorPoint.y < baseRoadSegment.y + 24 &&
+    distanceToPolyline(cursorPoint, northReferencePoints) < 12;
 
   const fillPreviewActive =
-    state.activeTool === 'fill' &&
-    state.viewMode === 'tracker' &&
-    !state.fillCommitted &&
+    ui.activeTool === 'fill' &&
+    ui.viewMode === 'tracker' &&
+    !flow.fillCommitted &&
     isInsideWorkingParcel;
 
   const blockPreviewActive =
-    state.activeTool === 'fill' &&
-    state.viewMode === 'block' &&
-    state.fillCommitted &&
-    !state.blockFillCommitted &&
+    ui.activeTool === 'fill' &&
+    ui.viewMode === 'block' &&
+    flow.fillCommitted &&
+    !flow.blockFillCommitted &&
     isInsideWorkingParcel;
 
-  const blocksVisible = state.showBlocks && (state.blockFillCommitted || blockPreviewActive);
+  const blocksVisible = ui.showBlocks && (flow.blockFillCommitted || blockPreviewActive);
 
-  const northTrackerIds = new Set(baseLayout.trackers.filter((t) => t.y + t.height / 2 < baseLayout.road.y).map((t) => t.id));
+  const northTrackerIds = new Set(
+    baseLayout.trackers.filter((t) => t.y + t.height / 2 < baseRoadSegment.y).map((t) => t.id),
+  );
 
   const getSnapTarget = (point: Point): SnapTarget | null => {
-    if (!state.osnapEnabled) {
+    if (!ui.osnapEnabled) {
       return null;
     }
 
-    const roadX = Math.max(roadFromEdit.x1, Math.min(roadFromEdit.x2, point.x));
+    const roadX = Math.max(roadSegment.x1, Math.min(roadSegment.x2, point.x));
     const candidates: SnapTarget[] = [
       ...workingParcel.points.map((vertex) => ({
         point: vertex,
@@ -503,19 +570,25 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         distance: Math.hypot(vertex.x - point.x, vertex.y - point.y),
       })),
       {
-        point: { x: roadX, y: roadFromEdit.y },
+        point: { x: roadX, y: roadSegment.y },
         label: 'Road centerline',
-        distance: Math.hypot(roadX - point.x, roadFromEdit.y - point.y),
+        distance: Math.hypot(roadX - point.x, roadSegment.y - point.y),
       },
       {
-        point: { x: roadX, y: roadFromEdit.y - roadFromEdit.width / 2 },
+        point: { x: roadX, y: roadSegment.y - roadSegment.width / 2 },
         label: 'Road edge',
-        distance: Math.hypot(roadX - point.x, roadFromEdit.y - roadFromEdit.width / 2 - point.y),
+        distance: Math.hypot(
+          roadX - point.x,
+          roadSegment.y - roadSegment.width / 2 - point.y,
+        ),
       },
       {
-        point: { x: roadX, y: roadFromEdit.y + roadFromEdit.width / 2 },
+        point: { x: roadX, y: roadSegment.y + roadSegment.width / 2 },
         label: 'Road edge',
-        distance: Math.hypot(roadX - point.x, roadFromEdit.y + roadFromEdit.width / 2 - point.y),
+        distance: Math.hypot(
+          roadX - point.x,
+          roadSegment.y + roadSegment.width / 2 - point.y,
+        ),
       },
     ];
 
@@ -528,7 +601,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   const effectiveCursorPoint = snapTarget ? snapTarget.point : cursorPoint;
 
   const hoveredFieldTrackers = useMemo(() => {
-    if (!effectiveCursorPoint || !renderedTrackers.length || !state.fillCommitted) {
+    if (!effectiveCursorPoint || !renderedTrackers.length || !flow.fillCommitted) {
       return [];
     }
 
@@ -537,22 +610,22 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return [];
     }
 
-    return getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
-  }, [effectiveCursorPoint, renderedTrackers, state.fillCommitted, roadFromEdit.y]);
+    return getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
+  }, [effectiveCursorPoint, renderedTrackers, flow.fillCommitted, roadSegment.y]);
 
   const activeFieldTrackers = useMemo(() => {
-    if (!state.activeFieldSeedId || !renderedTrackers.length || !state.fillCommitted) {
+    if (!ui.activeFieldSeedId || !renderedTrackers.length || !flow.fillCommitted) {
       return [];
     }
-    return getFieldBySeedId(renderedTrackers, state.activeFieldSeedId, roadFromEdit.y);
-  }, [state.activeFieldSeedId, renderedTrackers, state.fillCommitted, roadFromEdit.y]);
+    return getFieldBySeedId(renderedTrackers, ui.activeFieldSeedId, roadSegment.y);
+  }, [ui.activeFieldSeedId, renderedTrackers, flow.fillCommitted, roadSegment.y]);
 
   const selectedTrackers = useMemo(() => {
     if (
       !effectiveCursorPoint ||
       !renderedTrackers.length ||
-      state.activeTool !== 'select' ||
-      !state.fillCommitted
+      ui.activeTool !== 'select' ||
+      !flow.fillCommitted
     ) {
       return [];
     }
@@ -565,14 +638,14 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     const hoverField =
       hoveredFieldTrackers.length > 0
         ? hoveredFieldTrackers
-        : getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
+        : getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
     const activeField = activeFieldTrackers.length > 0 ? activeFieldTrackers : hoverField;
 
-    if (state.selectionScope === 'individual') {
+    if (ui.selectionScope === 'individual') {
       return [nearest];
     }
 
-    if (state.selectionScope === 'row') {
+    if (ui.selectionScope === 'row') {
       const nearestCenterX = nearest.x + nearest.width / 2;
       return hoverField.filter((tracker) => {
         const centerX = tracker.x + tracker.width / 2;
@@ -580,7 +653,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       });
     }
 
-    if (state.selectionScope === 'field') {
+    if (ui.selectionScope === 'field') {
       return hoverField;
     }
 
@@ -588,78 +661,80 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   }, [
     effectiveCursorPoint,
     renderedTrackers,
-    state.activeTool,
-    state.fillCommitted,
-    state.selectionScope,
-    state.activeFieldSeedId,
+    ui.activeTool,
+    flow.fillCommitted,
+    ui.selectionScope,
+    ui.activeFieldSeedId,
     hoveredFieldTrackers,
     activeFieldTrackers,
-    roadFromEdit.y,
+    roadSegment.y,
   ]);
 
   const selectIds = new Set(selectedTrackers.map((tracker) => tracker.id));
+
+  const ilrLabel = `${settings.ilrRange[0].toFixed(2)}–${settings.ilrRange[1].toFixed(2)}`;
 
   const tooltip = (() => {
     if (flashMessage) {
       return flashMessage;
     }
 
-    if (state.activeTool === 'fill' && state.viewMode === 'tracker') {
-      if (!state.fillCommitted && isInsideWorkingParcel) {
-        return `${state.fillPattern[0].toUpperCase()}${state.fillPattern.slice(1)} · +${previewCapacityMw} MW · ${baseLayout.trackers.length} trackers`;
+    if (ui.activeTool === 'fill' && ui.viewMode === 'tracker') {
+      if (!flow.fillCommitted && isInsideWorkingParcel) {
+        return `${ui.fillPattern[0].toUpperCase()}${ui.fillPattern.slice(1)} · +${previewCapacityMw} MW · ${baseLayout.trackers.length} trackers`;
       }
-      if (!state.fillCommitted) {
+      if (!flow.fillCommitted) {
         return 'Hover inside the left parcel to preview Fill';
       }
       return 'Fill committed. Use Edit/Align/Trim/Select for manual operations';
     }
 
-    if (state.activeTool === 'align' && state.viewMode === 'tracker') {
-      if (!state.fillCommitted) {
+    if (ui.activeTool === 'align' && ui.viewMode === 'tracker') {
+      if (!flow.fillCommitted) {
         return 'Commit Fill before running Align';
       }
-      if (!state.alignReferencePicked) {
+      if (!flow.alignReferencePicked) {
         return 'Pick 1: select north boundary';
       }
-      if (!state.alignSelectionPicked) {
+      if (!flow.alignSelectionPicked) {
         return 'Pick 2: select north field (above road)';
       }
-      if (!state.alignCommittedMode) {
-        return `Align: ${state.alignMode} preview (Space toggles)`;
+      if (!flow.alignCommittedMode) {
+        return `Align: ${ui.alignMode} preview (Space toggles)`;
       }
-      return `Aligned (${state.alignCommittedMode}) committed`;
+      return `Aligned (${flow.alignCommittedMode}) committed`;
     }
 
-    if (state.activeTool === 'edit') {
-      if (!state.fillCommitted) {
+    if (ui.activeTool === 'edit') {
+      if (!flow.fillCommitted) {
         return 'Commit Fill first';
       }
-      return `Edit (${state.editSubMode}) · click to apply local adaptive change in active field`;
+      return `Edit (${ui.editSubMode}) · click to apply local adaptive change in active field`;
     }
 
-    if (state.activeTool === 'trim') {
-      if (!state.fillCommitted) {
+    if (ui.activeTool === 'trim') {
+      if (!flow.fillCommitted) {
         return 'Commit Fill first';
       }
-      return `${state.trimExtendMode.toUpperCase()} · click to ${state.trimExtendMode} in active field`;
+      return `${ui.trimExtendMode.toUpperCase()} · click to ${ui.trimExtendMode} in active field`;
     }
 
-    if (state.activeTool === 'select') {
-      if (!state.fillCommitted) {
+    if (ui.activeTool === 'select') {
+      if (!flow.fillCommitted) {
         return 'Commit Fill first';
       }
-      return `Select ${state.selectionScope} · ${selectedTrackers.length} selected · ${state.moveCopyMode.toUpperCase()} on click`;
+      return `Select ${ui.selectionScope} · ${selectedTrackers.length} selected · ${ui.moveCopyMode.toUpperCase()} on click`;
     }
 
-    if (state.activeTool === 'fill' && state.viewMode === 'block') {
-      if (!state.fillCommitted) {
+    if (ui.activeTool === 'fill' && ui.viewMode === 'block') {
+      if (!flow.fillCommitted) {
         return 'Commit tracker Fill first';
       }
-      if (state.blockFillCommitted) {
-        return 'Block Fill committed · 5 blocks · ILR range 1.29–1.34';
+      if (flow.blockFillCommitted) {
+        return `Block Fill committed · 5 blocks · ILR range ${ilrLabel}`;
       }
       return isInsideWorkingParcel
-        ? 'Block Fill · 5 blocks · ILR range 1.29–1.34'
+        ? `Block Fill · 5 blocks · ILR range ${ilrLabel}`
         : 'Hover inside the left parcel to preview block fill';
     }
 
@@ -692,14 +767,14 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return;
     }
 
-    const field = getContiguousTrackerField(renderedTrackers, nearest, roadFromEdit.y);
+    const field = getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
     const nearestCenterX = nearest.x + nearest.width / 2;
     const selection = (() => {
-      if (state.selectionScope === 'individual') {
+      if (ui.selectionScope === 'individual') {
         return [nearest];
       }
 
-      if (state.selectionScope === 'row') {
+      if (ui.selectionScope === 'row') {
         return field.filter((tracker) => {
           const centerX = tracker.x + tracker.width / 2;
           return Math.abs(centerX - nearestCenterX) <= 8;
@@ -709,18 +784,18 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return field;
     })();
 
-    onFlowChange({ activeFieldSeedId: nearest.id });
+    onFlowChange({ ui: { activeFieldSeedId: nearest.id } });
 
-    if (state.moveCopyMode === 'move') {
+    if (ui.moveCopyMode === 'move') {
       setMoveOps((prev) => prev + 1);
       setFlashMessage(`Moved ${selection.length} trackers`);
       return;
     }
 
     const seed = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const step = Math.max(18, state.roadStepDistance * 0.6);
+    const step = Math.max(18, settings.roadStepDistance * 0.6);
 
-    if (state.moveCopyMode === 'copy') {
+    if (ui.moveCopyMode === 'copy') {
       const clones = selection.map((tracker, index) => ({
         ...tracker,
         id: `${tracker.id}-copy-${seed}-${index}`,
@@ -759,97 +834,116 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     const clickedInsideWorkingParcel = pointInPolygon(clickedPoint, workingParcel.points);
     const clickedNorthBoundary =
-      clickedPoint.y < baseLayout.road.y + 20 && distanceToPolyline(clickedPoint, NORTH_REFERENCE_POINTS) < 12;
+      clickedPoint.y < baseRoadSegment.y + 20 &&
+      distanceToPolyline(clickedPoint, northReferencePoints) < 12;
 
     if (
-      state.activeTool === 'fill' &&
-      state.viewMode === 'tracker' &&
-      !state.fillCommitted &&
+      ui.activeTool === 'fill' &&
+      ui.viewMode === 'tracker' &&
+      !flow.fillCommitted &&
       clickedInsideWorkingParcel
     ) {
       onFlowChange({
-        fillCommitted: true,
-        alignReferencePicked: false,
-        alignSelectionPicked: false,
-        alignCommittedMode: null,
-        blockFillCommitted: false,
-        editOps: 0,
-        trimOps: 0,
-        extendOps: 0,
-        activeFieldSeedId: null,
+        flow: {
+          fillCommitted: true,
+          alignReferencePicked: false,
+          alignSelectionPicked: false,
+          alignCommittedMode: null,
+          blockFillCommitted: false,
+        },
+        ui: {
+          activeFieldSeedId: null,
+        },
       });
       setMoveOps(0);
+      setEditOps(0);
+      setTrimOps(0);
+      setExtendOps(0);
       setCopiedTrackers([]);
       return;
     }
 
-    if (state.activeTool === 'align' && state.viewMode === 'tracker' && state.fillCommitted) {
-      if (!state.alignReferencePicked && clickedNorthBoundary) {
-        onFlowChange({ alignReferencePicked: true, alignSelectionPicked: false, alignCommittedMode: null });
+    if (ui.activeTool === 'align' && ui.viewMode === 'tracker' && flow.fillCommitted) {
+      if (!flow.alignReferencePicked && clickedNorthBoundary) {
+        onFlowChange({
+          flow: { alignReferencePicked: true, alignSelectionPicked: false, alignCommittedMode: null },
+        });
         return;
       }
 
       if (
-        state.alignReferencePicked &&
-        !state.alignSelectionPicked &&
+        flow.alignReferencePicked &&
+        !flow.alignSelectionPicked &&
         clickedInsideWorkingParcel &&
-        clickedPoint.y < baseLayout.road.y
+        clickedPoint.y < baseRoadSegment.y
       ) {
-        onFlowChange({ alignSelectionPicked: true });
+        onFlowChange({ flow: { alignSelectionPicked: true } });
         return;
       }
 
       if (
-        state.alignReferencePicked &&
-        state.alignSelectionPicked &&
-        !state.alignCommittedMode &&
+        flow.alignReferencePicked &&
+        flow.alignSelectionPicked &&
+        !flow.alignCommittedMode &&
         clickedInsideWorkingParcel
       ) {
-        onFlowChange({ alignCommittedMode: state.alignMode });
+        onFlowChange({ flow: { alignCommittedMode: ui.alignMode } });
       }
 
       return;
     }
 
     if (
-      state.activeTool === 'fill' &&
-      state.viewMode === 'block' &&
-      state.fillCommitted &&
-      !state.blockFillCommitted &&
+      ui.activeTool === 'fill' &&
+      ui.viewMode === 'block' &&
+      flow.fillCommitted &&
+      !flow.blockFillCommitted &&
       clickedInsideWorkingParcel
     ) {
-      onFlowChange({ blockFillCommitted: true });
+      onFlowChange({ flow: { blockFillCommitted: true } });
       return;
     }
 
-    if (state.activeTool === 'edit' && state.fillCommitted && clickedInsideWorkingParcel) {
+    if (ui.activeTool === 'edit' && flow.fillCommitted && clickedInsideWorkingParcel) {
       const nearest = getNearestTracker(renderedTrackers, clickedPoint);
       if (!nearest) {
         setFlashMessage('No trackers in edit target');
         return;
       }
-      onFlowChange({ editOps: state.editOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
-      setFlashMessage(`Edit ${state.editSubMode} applied`);
+      setEditOps((prev) => prev + 1);
+      onFlowChange({
+        flow: { blockFillCommitted: false },
+        ui: { activeFieldSeedId: nearest.id },
+      });
+      setFlashMessage(`Edit ${ui.editSubMode} applied`);
       return;
     }
 
-    if (state.activeTool === 'trim' && state.fillCommitted && clickedInsideWorkingParcel) {
+    if (ui.activeTool === 'trim' && flow.fillCommitted && clickedInsideWorkingParcel) {
       const nearest = getNearestTracker(renderedTrackers, clickedPoint);
       if (!nearest) {
         setFlashMessage('No trackers in trim target');
         return;
       }
-      if (state.trimExtendMode === 'trim') {
-        onFlowChange({ trimOps: state.trimOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
+      if (ui.trimExtendMode === 'trim') {
+        setTrimOps((prev) => prev + 1);
+        onFlowChange({
+          flow: { blockFillCommitted: false },
+          ui: { activeFieldSeedId: nearest.id },
+        });
         setFlashMessage('Trim applied');
       } else {
-        onFlowChange({ extendOps: state.extendOps + 1, blockFillCommitted: false, activeFieldSeedId: nearest.id });
+        setExtendOps((prev) => prev + 1);
+        onFlowChange({
+          flow: { blockFillCommitted: false },
+          ui: { activeFieldSeedId: nearest.id },
+        });
         setFlashMessage('Extend applied');
       }
       return;
     }
 
-    if (state.activeTool === 'select' && state.fillCommitted && clickedInsideWorkingParcel) {
+    if (ui.activeTool === 'select' && flow.fillCommitted && clickedInsideWorkingParcel) {
       onSelectAction(clickedPoint);
     }
   };
@@ -862,7 +956,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     setCursorPoint(point);
   };
 
-  const roadVisible = fillPreviewActive || state.fillCommitted;
+  const roadVisible = fillPreviewActive || flow.fillCommitted;
 
   return (
     <div className="w-full h-full bg-slate-950 overflow-hidden relative select-none">
@@ -888,7 +982,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           ))}
         </g>
 
-        {PARCELS.map((parcel) => (
+        {model.parcels.map((parcel) => (
           <path
             key={parcel.id}
             d={toPath(parcel.points)}
@@ -900,9 +994,24 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         ))}
 
         {roadVisible && (
-          <g opacity={state.viewMode === 'block' ? 0.26 : fillPreviewActive ? 0.55 : 0.9}>
-            <line x1={roadFromEdit.x1} y1={roadFromEdit.y} x2={roadFromEdit.x2} y2={roadFromEdit.y} stroke="#cbd5e1" strokeWidth={roadFromEdit.width} />
-            <line x1={roadFromEdit.x1} y1={roadFromEdit.y} x2={roadFromEdit.x2} y2={roadFromEdit.y} stroke="#475569" strokeWidth={1.5} strokeDasharray="8 8" />
+          <g opacity={ui.viewMode === 'block' ? 0.26 : fillPreviewActive ? 0.55 : 0.9}>
+            <line
+              x1={roadSegment.x1}
+              y1={roadSegment.y}
+              x2={roadSegment.x2}
+              y2={roadSegment.y}
+              stroke="#cbd5e1"
+              strokeWidth={roadSegment.width}
+            />
+            <line
+              x1={roadSegment.x1}
+              y1={roadSegment.y}
+              x2={roadSegment.x2}
+              y2={roadSegment.y}
+              stroke="#475569"
+              strokeWidth={1.5}
+              strokeDasharray="8 8"
+            />
           </g>
         )}
 
@@ -914,11 +1023,11 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           </g>
         )}
 
-        {!fillPreviewActive && state.fillCommitted && (
-          <g opacity={state.viewMode === 'block' ? 0.3 : 1}>
+        {!fillPreviewActive && flow.fillCommitted && (
+          <g opacity={ui.viewMode === 'block' ? 0.3 : 1}>
             {renderedTrackers.map((tracker) => {
               const isPreviewNorth = alignPreviewTrackers.length > 0 && northTrackerIds.has(tracker.id);
-              const isSelected = selectIds.has(tracker.id) && state.activeTool === 'select';
+              const isSelected = selectIds.has(tracker.id) && ui.activeTool === 'select';
               return (
                 <rect
                   key={tracker.id}
@@ -936,7 +1045,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           </g>
         )}
 
-        {alignPreviewTrackers.length > 0 && !state.alignCommittedMode && (
+        {alignPreviewTrackers.length > 0 && !flow.alignCommittedMode && (
           <g opacity={0.75}>
             {alignPreviewTrackers.filter((tracker) => northTrackerIds.has(tracker.id)).map((tracker) => (
               <rect
@@ -954,22 +1063,24 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
           </g>
         )}
 
-        {(state.alignReferencePicked || isHoveringNorthBoundary) && state.activeTool === 'align' && state.fillCommitted && (
-          <polyline
-            points={NORTH_REFERENCE_POINTS.map((point) => `${point.x},${point.y}`).join(' ')}
-            fill="none"
-            stroke="#22d3ee"
-            strokeWidth={3}
-            strokeLinecap="round"
-          />
-        )}
+        {(flow.alignReferencePicked || isHoveringNorthBoundary) &&
+          ui.activeTool === 'align' &&
+          flow.fillCommitted && (
+            <polyline
+              points={northReferencePoints.map((point) => `${point.x},${point.y}`).join(' ')}
+              fill="none"
+              stroke="#22d3ee"
+              strokeWidth={3}
+              strokeLinecap="round"
+            />
+          )}
 
-        {state.alignReferencePicked && !state.alignSelectionPicked && (
+        {flow.alignReferencePicked && !flow.alignSelectionPicked && (
           <rect
             x={110}
             y={110}
             width={500}
-            height={baseLayout.road.y - 120}
+            height={baseRoadSegment.y - 120}
             fill="rgba(34, 211, 238, 0.08)"
             stroke="rgba(34, 211, 238, 0.45)"
             strokeDasharray="7 7"
@@ -977,26 +1088,50 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
         )}
 
         {blocksVisible && (
-          <g opacity={state.blockFillCommitted ? 0.78 : 0.52}>
-            {blockMasks.map((block) => (
-              <g key={block.id}>
-                <rect x={block.bounds.x} y={block.bounds.y} width={block.bounds.width} height={block.bounds.height} fill={block.color} stroke={block.color.replace('0.45', '0.95')} strokeWidth={state.viewMode === 'block' ? 2 : 1} />
-                <rect x={block.bounds.x + block.bounds.width / 2 - 28} y={block.bounds.y + block.bounds.height / 2 - 11} width={56} height={22} rx={4} fill="rgba(15, 23, 42, 0.78)" />
-                <text x={block.bounds.x + block.bounds.width / 2} y={block.bounds.y + block.bounds.height / 2 + 4} textAnchor="middle" fill="#f8fafc" fontSize={10} fontWeight={700}>
-                  {block.label}
-                </text>
-              </g>
-            ))}
+          <g opacity={flow.blockFillCommitted ? 0.78 : 0.52}>
+            {blockMasks.map((block, index) => {
+              const bounds = getPolygonBounds(block.boundary);
+              const centerX = bounds.minX + bounds.width / 2;
+              const centerY = bounds.minY + bounds.height / 2;
+              return (
+                <g key={block.id}>
+                  <path
+                    d={toPath(block.boundary)}
+                    fill={block.color}
+                    stroke={block.color.replace('0.45', '0.95')}
+                    strokeWidth={ui.viewMode === 'block' ? 2 : 1}
+                  />
+                  <rect
+                    x={centerX - 28}
+                    y={centerY - 11}
+                    width={56}
+                    height={22}
+                    rx={4}
+                    fill="rgba(15, 23, 42, 0.78)"
+                  />
+                  <text
+                    x={centerX}
+                    y={centerY + 4}
+                    textAnchor="middle"
+                    fill="#f8fafc"
+                    fontSize={10}
+                    fontWeight={700}
+                  >
+                    Block {index + 1}
+                  </text>
+                </g>
+              );
+            })}
           </g>
         )}
 
-        {state.activeTool === 'align' && state.alignSelectionPicked && !state.alignCommittedMode && (
+        {ui.activeTool === 'align' && flow.alignSelectionPicked && !flow.alignCommittedMode && (
           <text x={126} y={86} fill="#67e8f9" fontSize={11} fontWeight={700}>
-            Setback target: {TRACKER_BORDER_SETBACK_PX / 2}m from north boundary
+            Setback target: {settings.boundarySetback}m from north boundary
           </text>
         )}
 
-        {state.smartGuidesEnabled && effectiveCursorPoint && (
+        {ui.smartGuidesEnabled && effectiveCursorPoint && (
           <g opacity={0.62}>
             <line x1={effectiveCursorPoint.x} y1={0} x2={effectiveCursorPoint.x} y2={CANVAS_VIEWBOX.height} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={1} />
             <line x1={0} y1={effectiveCursorPoint.y} x2={CANVAS_VIEWBOX.width} y2={effectiveCursorPoint.y} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={1} />
@@ -1021,9 +1156,9 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       )}
 
       <div className="absolute top-4 right-4 bg-slate-900/90 border border-slate-700 rounded-md px-3 py-2 text-xs text-slate-200 flex gap-3">
-        <span className={state.fillCommitted ? 'text-emerald-300' : 'text-slate-400'}>Fill {state.fillCommitted ? 'done' : 'pending'}</span>
-        <span className={state.alignCommittedMode ? 'text-emerald-300' : 'text-slate-400'}>Align {state.alignCommittedMode ? state.alignCommittedMode : 'pending'}</span>
-        <span className={state.blockFillCommitted ? 'text-emerald-300' : 'text-slate-400'}>Blocks {state.blockFillCommitted ? 'done' : 'pending'}</span>
+        <span className={flow.fillCommitted ? 'text-emerald-300' : 'text-slate-400'}>Fill {flow.fillCommitted ? 'done' : 'pending'}</span>
+        <span className={flow.alignCommittedMode ? 'text-emerald-300' : 'text-slate-400'}>Align {flow.alignCommittedMode ? flow.alignCommittedMode : 'pending'}</span>
+        <span className={flow.blockFillCommitted ? 'text-emerald-300' : 'text-slate-400'}>Blocks {flow.blockFillCommitted ? 'done' : 'pending'}</span>
       </div>
 
       <div className="absolute bottom-4 left-4 flex items-center gap-3 text-xs">

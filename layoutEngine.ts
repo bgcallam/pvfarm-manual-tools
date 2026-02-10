@@ -2,16 +2,18 @@ import {
   AlignMode,
   Block,
   FillPattern,
+  LayoutSettings,
   Parcel,
   Point,
-  RoadGeometry,
+  Road,
   Tracker,
 } from './types';
 import {
   BLOCK_COLORS,
-  BLOCK_ILR_VALUES,
   CONFIG,
-  TRACKER_BORDER_SETBACK_PX,
+  DEFAULT_STRING_COUNT,
+  DEFAULT_STRING_SIZE,
+  MODULE_WATTAGE_W,
   TRACKER_SIZE_PX,
 } from './constants';
 
@@ -52,15 +54,21 @@ export const getParcelBounds = (parcel: Parcel) => {
   };
 };
 
-export const createRoadGeometry = (parcel: Parcel, roadWidthMeters: number): RoadGeometry => {
+export const createRoad = (parcel: Parcel, roadWidthMeters: number): Road => {
   const bounds = getParcelBounds(parcel);
+  const y = (bounds.minY + bounds.maxY) / 2;
   return {
-    x1: bounds.minX - 30,
-    x2: bounds.maxX + 30,
-    y: (bounds.minY + bounds.maxY) / 2,
+    id: 'road-0',
+    points: [
+      { x: bounds.minX - 30, y },
+      { x: bounds.maxX + 30, y },
+    ],
     width: roadWidthMeters * CONFIG.pixelsPerMeter,
   };
 };
+
+const getRoadCenterlineY = (road: Road): number =>
+  road.points.reduce((sum, point) => sum + point.y, 0) / road.points.length;
 
 const topBoundaryYAtX = (polygon: Point[], x: number): number | null => {
   const intersections: number[] = [];
@@ -94,9 +102,10 @@ const topBoundaryYAtX = (polygon: Point[], x: number): number | null => {
   return Math.min(...intersections);
 };
 
-const buildColumnIndex = (trackers: Tracker[], road: RoadGeometry) => {
+const buildColumnIndex = (trackers: Tracker[], road: Road) => {
+  const roadY = getRoadCenterlineY(road);
   const northTrackers = trackers.filter(
-    (tracker) => tracker.y + tracker.height / 2 < road.y,
+    (tracker) => tracker.y + tracker.height / 2 < roadY,
   );
 
   const columns = new Map<number, Tracker[]>();
@@ -117,11 +126,13 @@ const buildColumnIndex = (trackers: Tracker[], road: RoadGeometry) => {
 const computeColumnShiftMap = (
   trackers: Tracker[],
   parcel: Parcel,
-  road: RoadGeometry,
+  road: Road,
+  settings: LayoutSettings,
   mode: AlignMode,
 ): Map<number, number> => {
   const columns = buildColumnIndex(trackers, road);
   const shifts = new Map<number, number>();
+  const setbackPx = settings.boundarySetback * CONFIG.pixelsPerMeter;
 
   columns.forEach((columnTrackers, key) => {
     const topTracker = columnTrackers[0];
@@ -133,7 +144,7 @@ const computeColumnShiftMap = (
       return;
     }
 
-    const targetTopY = topBoundary + TRACKER_BORDER_SETBACK_PX;
+    const targetTopY = topBoundary + setbackPx;
     const availableShift = Math.max(0, topTracker.y - targetTopY);
     shifts.set(key, availableShift);
   });
@@ -156,13 +167,15 @@ const computeColumnShiftMap = (
 export const applyNorthFieldAlignment = (
   trackers: Tracker[],
   parcel: Parcel,
-  road: RoadGeometry,
+  road: Road,
+  settings: LayoutSettings,
   mode: AlignMode,
 ): Tracker[] => {
-  const shifts = computeColumnShiftMap(trackers, parcel, road, mode);
+  const shifts = computeColumnShiftMap(trackers, parcel, road, settings, mode);
+  const roadY = getRoadCenterlineY(road);
 
   return trackers.map((tracker) => {
-    const isNorth = tracker.y + tracker.height / 2 < road.y;
+    const isNorth = tracker.y + tracker.height / 2 < roadY;
     if (!isNorth) {
       return tracker;
     }
@@ -182,9 +195,9 @@ export const generateTrackerLayout = (
   fillPattern: FillPattern,
   rowSpacingMeters: number,
   roadWidthMeters: number,
-): { trackers: Tracker[]; road: RoadGeometry } => {
+): { trackers: Tracker[]; road: Road } => {
   const bounds = getParcelBounds(parcel);
-  const road = createRoadGeometry(parcel, roadWidthMeters);
+  const road = createRoad(parcel, roadWidthMeters);
   const trackers: Tracker[] = [];
 
   const preset = FILL_PRESETS[fillPattern];
@@ -193,15 +206,17 @@ export const generateTrackerLayout = (
 
   const trackerW = TRACKER_SIZE_PX.width;
   const trackerH = TRACKER_SIZE_PX.height;
+  const roadY = getRoadCenterlineY(road);
   const roadGap = road.width / 2 + 16;
 
   let y = bounds.minY + 30;
+  let rowIndex = 0;
 
   while (y + trackerH < bounds.maxY - 12) {
     const rowCenterY = y + trackerH / 2;
 
-    if (Math.abs(rowCenterY - road.y) < roadGap) {
-      y = road.y + roadGap + 8;
+    if (Math.abs(rowCenterY - roadY) < roadGap) {
+      y = roadY + roadGap + 8;
       continue;
     }
 
@@ -220,6 +235,12 @@ export const generateTrackerLayout = (
           width: trackerW,
           height: trackerH,
           parcelId: parcel.id,
+          stringCount: DEFAULT_STRING_COUNT,
+          stringSize: DEFAULT_STRING_SIZE,
+          orientation: 'portrait',
+          blockId: null,
+          rowIndex,
+          assignmentState: 'unassigned',
         });
       }
 
@@ -227,26 +248,64 @@ export const generateTrackerLayout = (
     }
 
     y += trackerH + rowSpacingPx;
+    rowIndex += 1;
   }
 
   return { trackers, road };
 };
 
+const trackerDcKw = (tracker: Tracker): number =>
+  (tracker.stringCount * tracker.stringSize * MODULE_WATTAGE_W) / 1000;
+
+const rectToPolygon = (x: number, y: number, width: number, height: number): Point[] => ([
+  { x, y },
+  { x: x + width, y },
+  { x: x + width, y: y + height },
+  { x, y: y + height },
+]);
+
+const trackersWithinBounds = (
+  trackers: Tracker[],
+  bounds: { x: number; y: number; width: number; height: number },
+): string[] => trackers
+  .filter((tracker) => {
+    const cx = tracker.x + tracker.width / 2;
+    const cy = tracker.y + tracker.height / 2;
+    return (
+      cx >= bounds.x &&
+      cx <= bounds.x + bounds.width &&
+      cy >= bounds.y &&
+      cy <= bounds.y + bounds.height
+    );
+  })
+  .map((tracker) => tracker.id);
+
 const blockFromBounds = (
   id: string,
-  ilr: string,
   color: string,
   x: number,
   y: number,
   width: number,
   height: number,
-): Block => ({
-  id,
-  ilr,
-  color,
-  label: `${ilr} ILR`,
-  bounds: { x, y, width, height },
-});
+  trackers: Tracker[],
+  settings: LayoutSettings,
+): Block => {
+  const trackerIds = trackersWithinBounds(trackers, { x, y, width, height });
+  const dcPowerKw = trackerIds.reduce((sum, trackerId) => {
+    const tracker = trackers.find((item) => item.id === trackerId);
+    return tracker ? sum + trackerDcKw(tracker) : sum;
+  }, 0);
+  const targetIlr = (settings.ilrRange[0] + settings.ilrRange[1]) / 2;
+  return {
+    id,
+    color,
+    trackerIds,
+    skidId: null,
+    boundary: rectToPolygon(x, y, width, height),
+    ilr: dcPowerKw ? targetIlr : 0,
+    dcPowerKw,
+  };
+};
 
 const getTrackersBounds = (trackers: Tracker[]) => {
   const minX = Math.min(...trackers.map((tracker) => tracker.x));
@@ -257,16 +316,21 @@ const getTrackersBounds = (trackers: Tracker[]) => {
   return { minX, minY, maxX, maxY };
 };
 
-export const generateBlockMasks = (trackers: Tracker[], road: RoadGeometry): Block[] => {
+export const generateBlockMasks = (
+  trackers: Tracker[],
+  road: Road,
+  settings: LayoutSettings,
+): Block[] => {
   if (!trackers.length) {
     return [];
   }
 
+  const roadY = getRoadCenterlineY(road);
   const northTrackers = trackers.filter(
-    (tracker) => tracker.y + tracker.height / 2 < road.y,
+    (tracker) => tracker.y + tracker.height / 2 < roadY,
   );
   const southTrackers = trackers.filter(
-    (tracker) => tracker.y + tracker.height / 2 > road.y,
+    (tracker) => tracker.y + tracker.height / 2 > roadY,
   );
 
   if (!northTrackers.length || !southTrackers.length) {
@@ -288,12 +352,13 @@ export const generateBlockMasks = (trackers: Tracker[], road: RoadGeometry): Blo
     blocks.push(
       blockFromBounds(
         `block-north-${index}`,
-        BLOCK_ILR_VALUES[index],
         BLOCK_COLORS[index],
         cursorX,
         northBounds.minY - 6,
         width,
         northBounds.maxY - northBounds.minY + 12,
+        trackers,
+        settings,
       ),
     );
     cursorX += width;
@@ -303,17 +368,18 @@ export const generateBlockMasks = (trackers: Tracker[], road: RoadGeometry): Blo
   const southWidth = southBounds.maxX - southBounds.minX + 12;
 
   southRatios.forEach((ratio, ratioIndex) => {
-    const blockIndex = ratioIndex + 3;
     const width = southWidth * ratio;
+    const colorIndex = (northRatios.length + ratioIndex) % BLOCK_COLORS.length;
     blocks.push(
       blockFromBounds(
         `block-south-${ratioIndex}`,
-        BLOCK_ILR_VALUES[blockIndex],
-        BLOCK_COLORS[blockIndex],
+        BLOCK_COLORS[colorIndex],
         cursorX,
         southBounds.minY - 6,
         width,
         southBounds.maxY - southBounds.minY + 12,
+        trackers,
+        settings,
       ),
     );
     cursorX += width;
