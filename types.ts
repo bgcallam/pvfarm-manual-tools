@@ -35,6 +35,7 @@ export interface Road {
   id: string;
   points: Point[];
   width: number;
+  active?: boolean;
 }
 
 export interface Skid {
@@ -80,6 +81,7 @@ export interface UIState {
   selectedTrackerIds: string[];
   selectedRoadId: string | null;
   selectedBoundaryId: string | null;
+  roadDrawMode: boolean;
   osnapEnabled: boolean;
   osnapCategories: {
     rowSpacing: boolean;

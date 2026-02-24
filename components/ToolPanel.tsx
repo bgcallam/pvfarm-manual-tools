@@ -95,6 +95,16 @@ const ToolPanel: React.FC<ToolPanelProps> = ({ state, onChange }) => {
               onClick={() => onChange({ ui: { editSubMode: 'add_remove' } })}
             />
           </div>
+          {ui.viewMode === 'tracker' && (
+            <div className="flex items-center gap-2 pt-2">
+              <PillButton
+                active={ui.roadDrawMode}
+                label={ui.roadDrawMode ? 'Road Draw: On' : 'Road Draw: Off'}
+                onClick={() => onChange({ ui: { roadDrawMode: !ui.roadDrawMode } })}
+              />
+              <span className="text-[10px] text-slate-500">Click to add points, double-click or Enter to finish.</span>
+            </div>
+          )}
         </div>
       )}
 

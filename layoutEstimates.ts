@@ -13,16 +13,15 @@ export function estimateRows(distance: number, rowToRow: number): number {
 export function estimateStringsRange(
   distance: number,
   rowToRow: number,
-  stringCounts: readonly number[] = DEFAULT_STRING_COUNTS
+  _stringCounts: readonly number[] = DEFAULT_STRING_COUNTS
 ): { min: number; max: number } {
   const rows = estimateRows(distance, rowToRow);
-  if (rows === 0 || stringCounts.length === 0) {
+  if (rows === 0) {
     return { min: 0, max: 0 };
   }
-  const minCount = Math.min(...stringCounts);
-  const maxCount = Math.max(...stringCounts);
-  const min = Math.max(1, Math.round(rows * minCount));
-  const max = Math.max(min, Math.round(rows * maxCount));
+  const approx = Math.max(1, Math.round(rows / 2));
+  const min = Math.max(1, approx - 1);
+  const max = Math.max(min, approx);
   return { min, max };
 }
 

@@ -150,3 +150,31 @@ After deeper review against the original spec and PVFARM monorepo references, th
   - row vertical selection behavior
   - all = contiguous field behavior
   - escape-to-select command exit behavior
+
+## Replan v7.1 Decisions (2026-02-10)
+
+1. Adopt OPS-467 v7.0 as the spec baseline for the prototype.
+- Why: aligns tool set and interaction model with current MVP framework.
+
+2. Skip Notch tool for this prototype.
+- Why: user explicitly removed notch from prototype scope.
+
+3. Road placement is a draw tool (click to polyline).
+- Why: matches clarified UX and keeps road editing independent from fill.
+
+4. Skid is a positioned square with capacity.
+- Why: minimal representation that still supports block assignment logic.
+
+5. String sizes stay fixed; string count changes (1/2/3).
+- Why: clarified by user; use count to drive tracker sizing/labels.
+
+6. Fill without roads fills entire parcel.
+- Why: clarified by user to keep tool intuitive for empty-road sites.
+
+7. Remove assignment is a Fill modifier (eraser behavior).
+- Why: consistent with “few tools, simple modifiers” principle.
+
+8. Block height/width UI shows distance + approximate count.
+- Height: "X ft, approx Y rows".
+- Width: "X ft, approx 3-4 strings".
+- Why: user request to show both measurements for the prototype.

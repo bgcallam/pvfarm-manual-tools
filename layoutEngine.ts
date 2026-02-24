@@ -64,11 +64,12 @@ export const createRoad = (parcel: Parcel, roadWidthMeters: number): Road => {
       { x: bounds.maxX + 30, y },
     ],
     width: roadWidthMeters * CONFIG.pixelsPerMeter,
+    active: true,
   };
 };
 
 const getRoadCenterlineY = (road: Road): number =>
-  road.points.reduce((sum, point) => sum + point.y, 0) / road.points.length;
+  road.points.reduce((sum, point) => sum + point.y, 0) / Math.max(road.points.length, 1);
 
 const topBoundaryYAtX = (polygon: Point[], x: number): number | null => {
   const intersections: number[] = [];
@@ -171,6 +172,9 @@ export const applyNorthFieldAlignment = (
   settings: LayoutSettings,
   mode: AlignMode,
 ): Tracker[] => {
+  if (road.active === false || road.points.length === 0) {
+    return trackers;
+  }
   const shifts = computeColumnShiftMap(trackers, parcel, road, settings, mode);
   const roadY = getRoadCenterlineY(road);
 
@@ -195,9 +199,16 @@ export const generateTrackerLayout = (
   fillPattern: FillPattern,
   rowSpacingMeters: number,
   roadWidthMeters: number,
+  roadOverride?: Road | null,
 ): { trackers: Tracker[]; road: Road } => {
   const bounds = getParcelBounds(parcel);
-  const road = createRoad(parcel, roadWidthMeters);
+  const road = roadOverride ?? createRoad(parcel, roadWidthMeters);
+  if (roadOverride === null) {
+    road.active = false;
+  }
+  if (road.active === undefined) {
+    road.active = true;
+  }
   const trackers: Tracker[] = [];
 
   const preset = FILL_PRESETS[fillPattern];
@@ -207,7 +218,8 @@ export const generateTrackerLayout = (
   const trackerW = TRACKER_SIZE_PX.width;
   const trackerH = TRACKER_SIZE_PX.height;
   const roadY = getRoadCenterlineY(road);
-  const roadGap = road.width / 2 + 16;
+  const roadActive = road.active !== false && road.points.length > 0;
+  const roadGap = roadActive ? road.width / 2 + 16 : 0;
 
   let y = bounds.minY + 30;
   let rowIndex = 0;
@@ -215,7 +227,7 @@ export const generateTrackerLayout = (
   while (y + trackerH < bounds.maxY - 12) {
     const rowCenterY = y + trackerH / 2;
 
-    if (Math.abs(rowCenterY - roadY) < roadGap) {
+    if (roadActive && Math.abs(rowCenterY - roadY) < roadGap) {
       y = roadY + roadGap + 8;
       continue;
     }

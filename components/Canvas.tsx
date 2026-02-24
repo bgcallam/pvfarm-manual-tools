@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CANVAS_VIEWBOX,
   CONFIG,
@@ -40,6 +40,9 @@ const toPath = (points: Point[]): string => {
   return [`M ${first.x} ${first.y}`, ...rest.map((point) => `L ${point.x} ${point.y}`), 'Z'].join(' ');
 };
 
+const toPolylinePoints = (points: Point[]): string =>
+  points.map((point) => `${point.x},${point.y}`).join(' ');
+
 const getRoadCenterlineY = (road: Road): number =>
   road.points.reduce((sum, point) => sum + point.y, 0) / Math.max(road.points.length, 1);
 
@@ -47,11 +50,13 @@ const getRoadSegment = (road: Road) => {
   const xs = road.points.map((point) => point.x);
   const x1 = Math.min(...xs);
   const x2 = Math.max(...xs);
+  const active = road.active !== false && road.points.length > 0;
   return {
     x1,
     x2,
     y: getRoadCenterlineY(road),
     width: road.width,
+    active,
   };
 };
 
@@ -72,8 +77,8 @@ const getPolygonBounds = (points: Point[]) => {
   };
 };
 
-const isNorthOfRoad = (tracker: Tracker, roadY: number): boolean =>
-  tracker.y + tracker.height / 2 < roadY;
+const isNorthOfRoad = (tracker: Tracker, roadY: number | null): boolean =>
+  roadY === null ? true : tracker.y + tracker.height / 2 < roadY;
 
 const groupRows = (trackers: Tracker[]): Tracker[][] => {
   const buckets = new Map<number, Tracker[]>();
@@ -112,7 +117,7 @@ const getNearestTracker = (trackers: Tracker[], point: Point): Tracker | null =>
 const getContiguousTrackerField = (
   trackers: Tracker[],
   seed: Tracker,
-  roadY: number,
+  roadY: number | null,
 ): Tracker[] => {
   const seedIsNorth = isNorthOfRoad(seed, roadY);
 
@@ -161,7 +166,11 @@ const getContiguousTrackerField = (
   return field;
 };
 
-const getFieldBySeedId = (trackers: Tracker[], seedId: string, roadY: number): Tracker[] => {
+const getFieldBySeedId = (
+  trackers: Tracker[],
+  seedId: string,
+  roadY: number | null,
+): Tracker[] => {
   const seed = trackers.find((tracker) => tracker.id === seedId);
   if (!seed) {
     return [];
@@ -171,7 +180,7 @@ const getFieldBySeedId = (trackers: Tracker[], seedId: string, roadY: number): T
 
 const applyMoveOffset = (
   trackers: Tracker[],
-  roadY: number,
+  roadY: number | null,
   activeFieldSeedId: string | null,
   moveOps: number,
 ): Tracker[] => {
@@ -208,6 +217,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   const [copiedTrackers, setCopiedTrackers] = useState<Tracker[]>([]);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [isSnapSuppressed, setIsSnapSuppressed] = useState(false);
+  const [roadDraft, setRoadDraft] = useState<Point[] | null>(null);
 
   const workingParcel = model.parcels.find((parcel) => parcel.isWorking);
 
@@ -253,18 +263,56 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     }
   }, [flow.fillCommitted]);
 
+  useEffect(() => {
+    if (!(ui.activeTool === 'edit' && ui.viewMode === 'tracker' && ui.roadDrawMode)) {
+      setRoadDraft(null);
+    }
+  }, [ui.activeTool, ui.viewMode, ui.roadDrawMode]);
+
+  const commitRoad = useCallback((points: Point[]) => {
+    onFlowChange({
+      model: {
+        roads: [
+          {
+            id: `road-${Date.now()}`,
+            points,
+            width: settings.roadWidth * CONFIG.pixelsPerMeter,
+            active: true,
+          },
+        ],
+      },
+    });
+    setRoadDraft(null);
+    setFlashMessage('Road committed');
+  }, [onFlowChange, settings.roadWidth]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setRoadDraft(null);
+      }
+      if (event.key === 'Enter' && roadDraft && roadDraft.length >= 2) {
+        commitRoad(roadDraft);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [roadDraft, commitRoad]);
+
   const baseLayout = useMemo(() => {
     if (!workingParcel) {
       return null;
     }
 
+    const roadOverride = model.roads[0] ?? null;
     return generateTrackerLayout(
       workingParcel,
       ui.fillPattern,
       settings.rowToRow,
       settings.roadWidth,
+      roadOverride,
     );
-  }, [workingParcel, ui.fillPattern, settings.rowToRow, settings.roadWidth]);
+  }, [workingParcel, ui.fillPattern, settings.rowToRow, settings.roadWidth, model.roads]);
 
   if (!baseLayout || !workingParcel) {
     return <div className="w-full h-full bg-slate-950" />;
@@ -308,10 +356,17 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return null;
     }
 
+    if (!baseRoadSegment.active) {
+      return null;
+    }
+
     return isNorthOfRoad(seed, baseRoadSegment.y) ? 'north' : 'south';
-  }, [ui.activeFieldSeedId, trackersAfterAlign, baseRoadSegment.y]);
+  }, [ui.activeFieldSeedId, trackersAfterAlign, baseRoadSegment.y, baseRoadSegment.active]);
 
   const roadFromEdit = useMemo(() => {
+    if (!baseRoadSegment.active) {
+      return baseLayout.road;
+    }
     const shift = editOps * (ui.adaptiveRoadEditing ? 2.5 : 1.6);
     const direction = activeFieldSide === 'south' ? 1 : -1;
     const delta = shift * direction;
@@ -319,22 +374,24 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       ...baseLayout.road,
       points: baseLayout.road.points.map((point) => ({ ...point, y: point.y + delta })),
     };
-  }, [baseLayout.road, editOps, ui.adaptiveRoadEditing, activeFieldSide]);
+  }, [baseLayout.road, baseRoadSegment.active, editOps, ui.adaptiveRoadEditing, activeFieldSide]);
 
   const roadSegment = useMemo(() => getRoadSegment(roadFromEdit), [roadFromEdit]);
+  const roadActive = roadSegment.active;
+  const roadY = roadActive ? roadSegment.y : null;
 
   const activeFieldIds = useMemo<Set<string> | null>(() => {
     if (!flow.fillCommitted || !ui.activeFieldSeedId) {
       return null;
     }
 
-    const fieldTrackers = getFieldBySeedId(trackersAfterAlign, ui.activeFieldSeedId, roadSegment.y);
+    const fieldTrackers = getFieldBySeedId(trackersAfterAlign, ui.activeFieldSeedId, roadY);
     if (!fieldTrackers.length) {
       return null;
     }
 
     return new Set(fieldTrackers.map((tracker) => tracker.id));
-  }, [flow.fillCommitted, ui.activeFieldSeedId, trackersAfterAlign, roadSegment.y]);
+  }, [flow.fillCommitted, ui.activeFieldSeedId, trackersAfterAlign, roadY]);
 
   const trackersAfterEdit = useMemo(() => {
     if (!flow.fillCommitted) {
@@ -342,6 +399,10 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     }
 
     let trackers = trackersAfterAlign;
+
+    if (!roadActive) {
+      return trackers;
+    }
 
     if (editOps > 0) {
       const influence = ui.editSubMode === 'segment' ? 1.4 : ui.editSubMode === 'add_remove' ? 0.9 : 1;
@@ -462,8 +523,8 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   ]);
 
   const trackersAfterMove = useMemo(
-    () => applyMoveOffset(trackersAfterTrimExtend, roadSegment.y, ui.activeFieldSeedId, moveOps),
-    [trackersAfterTrimExtend, roadSegment.y, ui.activeFieldSeedId, moveOps],
+    () => applyMoveOffset(trackersAfterTrimExtend, roadY, ui.activeFieldSeedId, moveOps),
+    [trackersAfterTrimExtend, roadY, ui.activeFieldSeedId, moveOps],
   );
 
   const renderedTrackers = useMemo(() => {
@@ -536,6 +597,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     cursorPoint !== null && pointInPolygon(cursorPoint, workingParcel.points);
 
   const isHoveringNorthBoundary =
+    baseRoadSegment.active &&
     cursorPoint !== null &&
     cursorPoint.y < baseRoadSegment.y + 24 &&
     distanceToPolyline(cursorPoint, northReferencePoints) < 12;
@@ -556,7 +618,9 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   const blocksVisible = ui.showBlocks && (flow.blockFillCommitted || blockPreviewActive);
 
   const northTrackerIds = new Set(
-    baseLayout.trackers.filter((t) => t.y + t.height / 2 < baseRoadSegment.y).map((t) => t.id),
+    baseRoadSegment.active
+      ? baseLayout.trackers.filter((t) => t.y + t.height / 2 < baseRoadSegment.y).map((t) => t.id)
+      : [],
   );
 
   const getSnapTarget = (point: Point): SnapTarget | null => {
@@ -564,7 +628,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return null;
     }
 
-    const roadX = Math.max(roadSegment.x1, Math.min(roadSegment.x2, point.x));
+    const roadX = roadActive ? Math.max(roadSegment.x1, Math.min(roadSegment.x2, point.x)) : point.x;
     const candidates: SnapTarget[] = [];
 
     if (ui.osnapCategories.boundaryVertex) {
@@ -601,7 +665,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       }
     }
 
-    if (ui.osnapCategories.roadCenterline) {
+    if (roadActive && ui.osnapCategories.roadCenterline) {
       candidates.push({
         point: { x: roadX, y: roadSegment.y },
         label: 'Road centerline',
@@ -610,7 +674,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       });
     }
 
-    if (ui.osnapCategories.roadEdge) {
+    if (roadActive && ui.osnapCategories.roadEdge) {
       candidates.push(
         {
           point: { x: roadX, y: roadSegment.y - roadSegment.width / 2 },
@@ -669,15 +733,15 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return [];
     }
 
-    return getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
-  }, [effectiveCursorPoint, renderedTrackers, flow.fillCommitted, roadSegment.y]);
+    return getContiguousTrackerField(renderedTrackers, nearest, roadY);
+  }, [effectiveCursorPoint, renderedTrackers, flow.fillCommitted, roadY]);
 
   const activeFieldTrackers = useMemo(() => {
     if (!ui.activeFieldSeedId || !renderedTrackers.length || !flow.fillCommitted) {
       return [];
     }
-    return getFieldBySeedId(renderedTrackers, ui.activeFieldSeedId, roadSegment.y);
-  }, [ui.activeFieldSeedId, renderedTrackers, flow.fillCommitted, roadSegment.y]);
+    return getFieldBySeedId(renderedTrackers, ui.activeFieldSeedId, roadY);
+  }, [ui.activeFieldSeedId, renderedTrackers, flow.fillCommitted, roadY]);
 
   const hoverSelectionTrackers = useMemo(() => {
     if (
@@ -697,7 +761,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     const hoverField =
       hoveredFieldTrackers.length > 0
         ? hoveredFieldTrackers
-        : getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
+        : getContiguousTrackerField(renderedTrackers, nearest, roadY);
     const activeField = activeFieldTrackers.length > 0 ? activeFieldTrackers : hoverField;
 
     if (ui.viewMode === 'normal' || ui.selectionScope === 'individual') {
@@ -727,7 +791,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     ui.activeFieldSeedId,
     hoveredFieldTrackers,
     activeFieldTrackers,
-    roadSegment.y,
+    roadY,
   ]);
   const hoverIds = new Set(hoverSelectionTrackers.map((tracker) => tracker.id));
   const selectedIds = new Set(ui.selectedTrackerIds);
@@ -737,6 +801,9 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return null;
     }
     if (ui.normalSelectionTarget === 'road') {
+      if (!roadActive) {
+        return null;
+      }
       const distance = distanceToPolyline(effectiveCursorPoint, roadFromEdit.points);
       return distance <= SELECTION_THRESHOLD ? { type: 'road' as const } : null;
     }
@@ -755,6 +822,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     roadFromEdit.points,
     boundaryPolyline,
     hoverSelectionTrackers.length,
+    roadActive,
   ]);
 
   const ilrLabel = `${settings.ilrRange[0].toFixed(2)}–${settings.ilrRange[1].toFixed(2)}`;
@@ -851,6 +919,10 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
   const onSelectAction = (clickedPoint: Point) => {
     if (ui.viewMode === 'normal') {
       if (ui.normalSelectionTarget === 'road') {
+        if (!roadActive) {
+          setFlashMessage('No road in selection target');
+          return;
+        }
         const distance = distanceToPolyline(clickedPoint, roadFromEdit.points);
         if (distance > SELECTION_THRESHOLD) {
           setFlashMessage('No road in selection target');
@@ -891,7 +963,7 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
       return;
     }
 
-    const field = getContiguousTrackerField(renderedTrackers, nearest, roadSegment.y);
+    const field = getContiguousTrackerField(renderedTrackers, nearest, roadY);
     const nearestCenterX = nearest.x + nearest.width / 2;
     const selection = (() => {
       if (ui.selectionScope === 'individual' || ui.viewMode === 'normal') {
@@ -934,8 +1006,30 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
     const clickedInsideWorkingParcel = pointInPolygon(clickedPoint, workingParcel.points);
     const clickedNorthBoundary =
+      baseRoadSegment.active &&
       rawPoint.y < baseRoadSegment.y + 20 &&
       distanceToPolyline(rawPoint, northReferencePoints) < 12;
+
+    if (ui.activeTool === 'edit' && ui.viewMode === 'tracker' && ui.roadDrawMode) {
+      if (!clickedInsideWorkingParcel) {
+        setFlashMessage('Click inside the parcel to draw a road');
+        return;
+      }
+      const nextPoint = clickedPoint;
+      if (!roadDraft) {
+        setRoadDraft([nextPoint]);
+        setFlashMessage('Road: add next point (double-click to finish)');
+        return;
+      }
+      const nextPoints = [...roadDraft, nextPoint];
+      if ((event.detail >= 2 || event.shiftKey) && nextPoints.length >= 2) {
+        commitRoad(nextPoints);
+      } else {
+        setRoadDraft(nextPoints);
+        setFlashMessage('Road: add next point (double-click to finish)');
+      }
+      return;
+    }
 
     if (
       ui.activeTool === 'fill' &&
@@ -1063,9 +1157,10 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
     setCursorPoint(point);
   };
 
-  const roadVisible = fillPreviewActive || flow.fillCommitted;
+  const roadVisible = roadActive;
   const roadHighlighted =
-    ui.selectedRoadId === roadFromEdit.id || (normalHover && normalHover.type === 'road');
+    roadActive &&
+    (ui.selectedRoadId === roadFromEdit.id || (normalHover && normalHover.type === 'road'));
   const boundaryHighlighted =
     ui.selectedBoundaryId === workingParcel.id ||
     (normalHover && normalHover.type === 'boundary');
@@ -1119,23 +1214,46 @@ const Canvas: React.FC<CanvasProps> = ({ state, onTrackerCountChange, onFlowChan
 
         {roadVisible && (
           <g opacity={ui.viewMode === 'block' ? 0.26 : fillPreviewActive ? 0.55 : 0.9}>
-            <line
-              x1={roadSegment.x1}
-              y1={roadSegment.y}
-              x2={roadSegment.x2}
-              y2={roadSegment.y}
+            <polyline
+              points={toPolylinePoints(roadFromEdit.points)}
+              fill="none"
               stroke={roadHighlighted ? '#fbbf24' : '#cbd5e1'}
               strokeWidth={roadSegment.width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
-            <line
-              x1={roadSegment.x1}
-              y1={roadSegment.y}
-              x2={roadSegment.x2}
-              y2={roadSegment.y}
+            <polyline
+              points={toPolylinePoints(roadFromEdit.points)}
+              fill="none"
               stroke={roadHighlighted ? '#f59e0b' : '#475569'}
               strokeWidth={1.5}
               strokeDasharray="8 8"
             />
+          </g>
+        )}
+
+        {roadDraft && roadDraft.length > 0 && (
+          <g opacity={0.9}>
+            {roadDraft.length > 1 && (
+              <polyline
+                points={toPolylinePoints(roadDraft)}
+                fill="none"
+                stroke="#38bdf8"
+                strokeWidth={4}
+                strokeDasharray="6 4"
+              />
+            )}
+            {roadDraft.map((point, index) => (
+              <circle
+                key={`road-point-${index}`}
+                cx={point.x}
+                cy={point.y}
+                r={4}
+                fill="#0ea5e9"
+                stroke="#e0f2fe"
+                strokeWidth={1}
+              />
+            ))}
           </g>
         )}
 

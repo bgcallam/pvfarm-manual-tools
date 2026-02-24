@@ -12,7 +12,7 @@ describe('layoutEstimates', () => {
   });
 
   it('estimates strings range based on rows and string counts', () => {
-    expect(estimateStringsRange(100, 20, [1, 3])).toEqual({ min: 5, max: 15 });
+    expect(estimateStringsRange(100, 20, [1, 3])).toEqual({ min: 2, max: 3 });
   });
 
   it('formats approximate rows and strings labels', () => {

@@ -22,6 +22,7 @@ const initialState: DesignState = {
     selectedTrackerIds: [],
     selectedRoadId: null,
     selectedBoundaryId: null,
+    roadDrawMode: false,
     osnapEnabled: true,
     osnapCategories: {
       rowSpacing: true,
@@ -113,11 +114,21 @@ const App: React.FC = () => {
   };
 
   const handleToolSelect = (tool: ToolType) => {
-    handleStateChange({ ui: { activeTool: tool } });
+    handleStateChange({
+      ui: {
+        activeTool: tool,
+        roadDrawMode: tool === 'edit' ? state.ui.roadDrawMode : false,
+      },
+    });
   };
 
   const handleModeSelect = (mode: ViewMode) => {
-    handleStateChange({ ui: { viewMode: mode } });
+    handleStateChange({
+      ui: {
+        viewMode: mode,
+        roadDrawMode: mode === 'tracker' ? state.ui.roadDrawMode : false,
+      },
+    });
   };
 
   const resetFlow = () => {
@@ -137,6 +148,7 @@ const App: React.FC = () => {
         selectedTrackerIds: [],
         selectedRoadId: null,
         selectedBoundaryId: null,
+        roadDrawMode: false,
       },
       flow: {
         fillCommitted: false,
